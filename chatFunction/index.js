@@ -16,13 +16,13 @@ module.exports = async function (context, req) {
     if (!userMessage) {
         context.res = {
             status: 400,
-            body: "Error: No userMessage found in request body."
+            body: { message: "Error: No userMessage found in request body." }
         };
         return;
     }
 
     const skuMatch = userMessage.match(/sku\s+(\d+)/i);
-    const poMatch = userMessage.match(/purchase order\s+(\d+)/i);
+    const poMatch = userMessage.match(/purchase order\s+(\d+)/i); // Currently unused.
     const pumpMatch = userMessage.match(/where do we buy this pump/i);
 
     try {
@@ -33,11 +33,11 @@ module.exports = async function (context, req) {
                 const record = purchaseData[0];
                 context.res = {
                     status: 200,
-                    body: `Yes, there is a purchase order (${record.purchaseOrd}) for SKU ${skuId} with vendor ${record.vendorName}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`
+                    body: { message: `Yes, there is a purchase order (${record.purchaseOrd}) for SKU ${skuId} with vendor ${record.vendorName}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.` }
                 };
                 return;
             } else {
-                context.res = { status: 200, body: `No purchase order found for SKU ${skuId}.` };
+                context.res = { status: 200, body: { message: `No purchase order found for SKU ${skuId}.` } };
                 return;
             }
         }
@@ -48,11 +48,11 @@ module.exports = async function (context, req) {
                 const record = purchaseData[0];
                 context.res = {
                     status: 200,
-                    body: `We buy this pump from **${record.vendorName}** under Purchase Order **${record.purchaseOrd}**, ordered on **${record.doc_creation_date}**, with expected delivery on **${record.delivery_date}**.`
+                    body: { message: `We buy this pump from **${record.vendorName}** under Purchase Order **${record.purchaseOrd}**, ordered on **${record.doc_creation_date}**, with expected delivery on **${record.delivery_date}**.` }
                 };
                 return;
             } else {
-                context.res = { status: 200, body: `No purchase records found for a pump.` };
+                context.res = { status: 200, body: { message: `No purchase records found for a pump.` } };
                 return;
             }
         }
@@ -63,9 +63,9 @@ module.exports = async function (context, req) {
             messages: [{ role: "user", content: userMessage }]
         });
 
-        context.res = { status: 200, body: chatResponse.choices[0].message.content };
+        context.res = { status: 200, body: { message: chatResponse.choices[0].message.content } };
     } catch (error) {
-        context.res = { status: 500, body: "Error processing request: " + error.message };
+        context.res = { status: 500, body: { message: "Error processing request: " + error.message } };
     }
 };
 
