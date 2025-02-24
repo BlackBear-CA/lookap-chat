@@ -21,7 +21,8 @@ module.exports = async function (context, req) {
         return;
     }
 
-    const skuMatch = userMessage.match(/sku\s+(\d+)/i);
+    // ✅ Improved SKU Regex Matching
+    const skuMatch = userMessage.match(/\bsku(?:_id)?\s*(\d+)/i);
     const pumpMatch = userMessage.match(/where do we buy this pump/i);
 
     try {
@@ -29,43 +30,29 @@ module.exports = async function (context, req) {
             let skuId = skuMatch[1];
             context.log(`🔎 SKU Query Detected: ${skuId}`);
 
-            let purchaseData = await searchDataset(context, "purchaseRecords.csv", "sku_id", skuId);
-            context.log("📄 Purchase Data Found:", JSON.stringify(purchaseData));
+            try {
+                context.log(`🔎 Calling searchDataset() for SKU: ${skuId}`);
+                let purchaseData = await searchDataset(context, "purchaseRecords.csv", "sku_id", skuId);
+                context.log("📄 Purchase Data Found:", JSON.stringify(purchaseData));
 
-            if (purchaseData.length > 0) {
-                const record = purchaseData[0];
-                const responseMessage = `Yes, there is a purchase order (${record.purchaseOrd}) for SKU ${skuId} with vendor ${record.vendorName}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`;
-
-                context.log("✅ Responding with SKU details:", responseMessage);
-                context.res = { status: 200, body: { message: responseMessage } };
-                return;
-            } else {
-                context.log(`⚠️ No purchase order found for SKU ${skuId}.`);
-                context.res = { status: 200, body: { message: `No purchase order found for SKU ${skuId}.` } };
-                return;
+                if (purchaseData.length > 0) {
+                    const record = purchaseData[0];
+                    const responseMessage = `Yes, there is a purchase order (${record.purchaseOrd}) for SKU ${skuId} with vendor ${record.vendorName}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`;
+                    
+                    context.log("✅ Responding with SKU details:", responseMessage);
+                    context.res = { status: 200, body: { message: responseMessage } };
+                    return;
+                } else {
+                    context.log(`⚠️ No purchase order found for SKU ${skuId}.`);
+                    context.res = { status: 200, body: { message: `No purchase order found for SKU ${skuId}.` } };
+                    return;
+                }
+            } catch (error) {
+                context.log("❌ ERROR: searchDataset() failed:", error.message);
             }
         }
 
-        if (pumpMatch) {
-            context.log("🔎 Pump Query Detected");
-
-            let purchaseData = await searchDataset(context, "purchaseRecords.csv", "item_description", "pump");
-            context.log("📄 Pump Purchase Data:", JSON.stringify(purchaseData));
-
-            if (purchaseData.length > 0) {
-                const record = purchaseData[0];
-                const responseMessage = `We buy this pump from **${record.vendorName}** under Purchase Order **${record.purchaseOrd}**, ordered on **${record.doc_creation_date}**, with expected delivery on **${record.delivery_date}**.`;
-
-                context.log("✅ Responding with Pump details:", responseMessage);
-                context.res = { status: 200, body: { message: responseMessage } };
-                return;
-            } else {
-                context.log("⚠️ No purchase records found for a pump.");
-                context.res = { status: 200, body: { message: `No purchase records found for a pump.` } };
-                return;
-            }
-        }
-
+        // ✅ Ensure OpenAI is only used as a fallback
         context.log("💡 Sending user message to OpenAI API...");
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
         const chatResponse = await openai.chat.completions.create({
@@ -83,6 +70,7 @@ module.exports = async function (context, req) {
     }
 };
 
+// ✅ Fix: Ensure searchDataset() handles missing columns properly
 async function searchDataset(context, filename, column, value) {
     try {
         const blobServiceClient = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION_STRING);
@@ -92,7 +80,6 @@ async function searchDataset(context, filename, column, value) {
         context.log(`📂 Checking existence of ${filename} in Blob Storage...`);
         const exists = await blobClient.exists();
         if (!exists) {
-            context.log(`❌ ERROR: File ${filename} NOT FOUND.`);
             throw new Error(`File ${filename} not found.`);
         }
 
@@ -100,19 +87,23 @@ async function searchDataset(context, filename, column, value) {
         const downloadResponse = await blobClient.download();
         const downloadedData = await streamToString(downloadResponse.readableStreamBody);
 
-        context.log(`📄 File ${filename} successfully downloaded, parsing CSV...`);
+        // ✅ Ensure data is valid before parsing
+        if (!downloadedData || downloadedData.trim() === "") {
+            throw new Error(`File ${filename} is empty or unreadable.`);
+        }
+
+        context.log(`📄 Parsing ${filename}...`);
 
         return new Promise((resolve, reject) => {
             let results = [];
-
             csv.parseString(downloadedData, { headers: true })
                 .on("data", (row) => {
-                    if (row[column] && typeof row[column] === "string") {
-                        if (row[column].toLowerCase().includes(value.toLowerCase())) {
-                            results.push(row);
-                        }
-                    } else {
-                        context.log(`⚠️ Column '${column}' missing in row:`, row);
+                    if (!row[column]) {
+                        context.log(`⚠️ Column '${column}' missing in row, skipping:`, row);
+                        return;
+                    }
+                    if (row[column].toLowerCase().includes(value.toLowerCase())) {
+                        results.push(row);
                     }
                 })
                 .on("end", () => {
@@ -120,7 +111,7 @@ async function searchDataset(context, filename, column, value) {
                     resolve(results);
                 })
                 .on("error", (err) => {
-                    context.log(`❌ ERROR: CSV Parsing Failed: ${err.message}`);
+                    context.log(`❌ CSV Parsing Failed: ${err.message}`);
                     reject(err);
                 });
         });
