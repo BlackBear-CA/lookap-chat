@@ -127,15 +127,14 @@ async function analyzeUserQuery(userMessage) {
  */
 async function searchDataset(context, filename, column, value) {
     try {
-        context.log(`📂 Checking if ${filename} exists in Blob Storage...`);
         const blobServiceClient = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION_STRING);
         const containerClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER);
         const blobClient = containerClient.getBlobClient(filename);
 
+        context.log(`📂 Checking if ${filename} exists in Blob Storage...`);
         const exists = await blobClient.exists();
         if (!exists) {
-            context.log(`❌ ERROR: File ${filename} NOT FOUND.`);
-            throw new Error(`File ${filename} not found.`);
+            throw new Error(`❌ File ${filename} not found in Blob Storage.`);
         }
 
         context.log(`⬇️ Downloading ${filename} from Blob Storage...`);
@@ -143,27 +142,35 @@ async function searchDataset(context, filename, column, value) {
         const downloadedData = await streamToString(downloadResponse.readableStreamBody);
 
         if (!downloadedData.trim()) {
-            context.log(`❌ ERROR: File ${filename} is empty.`);
-            throw new Error(`File ${filename} is empty.`);
+            throw new Error(`⚠️ File ${filename} is empty.`);
         }
 
-        context.log(`📄 Parsing ${filename}...`);
+        context.log(`📄 Parsing ${filename} with CSV headers check...`);
 
         return new Promise((resolve, reject) => {
             let results = [];
+            let headersChecked = false;
+            let allHeaders = [];
+
             csv.parseString(downloadedData, { headers: true, trim: true })
-                .on("headers", (headerList) => {
-                    context.log(`✅ CSV Headers: ${headerList}`);
-                    if (!headerList.includes(column)) {
-                        reject(new Error(`Column '${column}' not found in ${filename}.`));
+                .on("headers", (headers) => {
+                    allHeaders = headers;
+                    context.log(`✅ CSV Headers in ${filename}: ${headers.join(", ")}`);
+
+                    if (!headers.includes(column)) {
+                        reject(new Error(`❌ Column '${column}' not found in ${filename}. Available columns: ${headers.join(", ")}`));
                     }
+                    headersChecked = true;
                 })
                 .on("data", (row) => {
-                    context.log(`🔹 Row Data: ${JSON.stringify(row)}`); // Log full row data
+                    if (!headersChecked) {
+                        reject(new Error(`❌ CSV headers not properly read for ${filename}.`));
+                    }
 
-                    if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
+                    context.log(`🔎 Checking row: ${JSON.stringify(row)}`);
+
+                    if (row[column] && row[column].toString().toLowerCase().includes(value.toLowerCase())) {
                         results.push(row);
-                        context.log(`✅ Match Found: ${JSON.stringify(row)}`);
                     }
                 })
                 .on("end", () => {
@@ -171,10 +178,11 @@ async function searchDataset(context, filename, column, value) {
                     resolve(results);
                 })
                 .on("error", (err) => {
-                    reject(new Error(`CSV Parsing Failed: ${err.message}`));
+                    reject(new Error(`❌ CSV Parsing Failed: ${err.message}`));
                 });
         });
     } catch (error) {
+        context.log(`❌ Error processing dataset ${filename}: ${error.message}`);
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
 }
