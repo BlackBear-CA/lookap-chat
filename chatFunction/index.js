@@ -18,14 +18,16 @@ module.exports = async function (context, req) {
     }
 
     try {
-        // 🔎 Step 1: Use OpenAI to determine the dataset, column, and search value
+        // 🔎 Step 1: Identify the dataset, column, and value using OpenAI
         const { dataset, column, value } = await analyzeUserQuery(userMessage);
+        
         if (dataset && column && value) {
-            context.log(`🔎 Query matches dataset: ${dataset}, column: ${column}, value: ${value}`);
+            context.log(`📂 Attempting to fetch data from Blob Storage: ${dataset}, Column: ${column}, Value: ${value}`);
 
             try {
-                // 🔎 Step 2: Search the dataset for results
+                // 🔎 Step 2: Query the dataset
                 let searchResults = await searchDataset(context, dataset, column, value);
+
                 if (searchResults.length > 0) {
                     context.res = { status: 200, body: { message: formatResults(searchResults) } };
                     return;
@@ -39,7 +41,7 @@ module.exports = async function (context, req) {
             }
         }
 
-        // 🔎 Step 3: If no structured query match, fallback to OpenAI for a response
+        // 🔎 Step 3: If no structured query match, fallback to OpenAI chat response
         context.log("💡 Sending user message to OpenAI API...");
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
         const chatResponse = await openai.chat.completions.create({
@@ -80,8 +82,8 @@ async function analyzeUserQuery(userMessage) {
 
     **User Query:** "${userMessage}"
 
-    **Response Format (MUST BE STRICT JSON):**
-    {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10271"}
+    **Response Format (STRICT JSON):**
+    {"dataset": "warehouseData.csv", "column": "SKU", "value": "10271"}
 
     If no dataset match is found, return:
     {"dataset": null, "column": null, "value": null}
@@ -108,10 +110,13 @@ async function searchDataset(context, filename, column, value) {
         const containerClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER);
         const blobClient = containerClient.getBlobClient(filename);
 
-        if (!(await blobClient.exists())) {
+        context.log(`📂 Checking if ${filename} exists in Blob Storage...`);
+        const exists = await blobClient.exists();
+        if (!exists) {
             throw new Error(`File ${filename} not found.`);
         }
 
+        context.log(`⬇️ Downloading ${filename} from Blob Storage...`);
         const downloadResponse = await blobClient.download();
         const downloadedData = await streamToString(downloadResponse.readableStreamBody);
 
@@ -119,16 +124,30 @@ async function searchDataset(context, filename, column, value) {
             throw new Error(`File ${filename} is empty.`);
         }
 
-        let results = [];
-        csv.parseString(downloadedData, { headers: true, trim: true })
-            .on("data", (row) => {
-                if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
-                    results.push(row);
-                }
-            })
-            .on("end", () => context.log(`✅ Found ${results.length} records in ${filename}`));
+        context.log(`📄 Parsing ${filename}...`);
 
-        return results;
+        return new Promise((resolve, reject) => {
+            let results = [];
+            csv.parseString(downloadedData, { headers: true, trim: true })
+                .on("headers", (headerList) => {
+                    context.log(`✅ CSV Headers: ${headerList}`);
+                    if (!headerList.includes(column)) {
+                        reject(new Error(`Column '${column}' not found in ${filename}.`));
+                    }
+                })
+                .on("data", (row) => {
+                    if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
+                        results.push(row);
+                    }
+                })
+                .on("end", () => {
+                    context.log(`✅ Found ${results.length} matching records in ${filename}`);
+                    resolve(results);
+                })
+                .on("error", (err) => {
+                    reject(new Error(`CSV Parsing Failed: ${err.message}`));
+                });
+        });
     } catch (error) {
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
