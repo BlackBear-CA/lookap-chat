@@ -110,14 +110,30 @@ async function analyzeUserQuery(userMessage) {
     {"dataset": null, "column": null, "value": null}
     `;
 
-    const response = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [{ role: "system", content: prompt }]
-    });
-
     try {
-        return JSON.parse(response.choices[0].message.content);
-    } catch {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "system", content: prompt }]
+        });
+
+        if (!response.choices || response.choices.length === 0) {
+            context.log("⚠️ OpenAI response is empty.");
+            return { dataset: null, column: null, value: null };
+        }
+
+        const responseText = response.choices[0].message.content;
+        context.log(`📩 OpenAI Response: ${responseText}`);
+
+        const parsedResponse = JSON.parse(responseText);
+
+        if (!parsedResponse.dataset || !parsedResponse.column || !parsedResponse.value) {
+            context.log("⚠️ OpenAI response missing dataset, column, or value:", parsedResponse);
+            return { dataset: null, column: null, value: null };
+        }
+
+        return parsedResponse;
+    } catch (error) {
+        context.log(`❌ OpenAI API Error: ${error.message}`);
         return { dataset: null, column: null, value: null };
     }
 }
@@ -158,31 +174,45 @@ async function searchDataset(context, filename, column, value) {
                     context.log(`✅ CSV Headers in ${filename}: ${headers.join(", ")}`);
 
                     if (!headers.includes(column)) {
-                        reject(new Error(`❌ Column '${column}' not found in ${filename}. Available columns: ${headers.join(", ")}`));
+                        context.log(`❌ Column '${column}' not found in ${filename}. Available columns: ${headers.join(", ")}`);
+                        reject(new Error(`Column '${column}' not found in ${filename}.`));
+                        return;
                     }
                     headersChecked = true;
                 })
                 .on("data", (row) => {
                     if (!headersChecked) {
-                        reject(new Error(`❌ CSV headers not properly read for ${filename}.`));
+                        context.log(`❌ CSV headers not properly read for ${filename}.`);
+                        reject(new Error(`CSV headers not properly read for ${filename}.`));
+                        return;
                     }
 
-                    if (!row[column]) {
+                    // Ensure the column exists in the row
+                    if (!(column in row)) {
                         context.log(`⚠️ Skipping row due to missing column '${column}': ${JSON.stringify(row)}`);
                         return;
                     }
 
-                    if (row[column].toString().toLowerCase().includes(value.toLowerCase())) {
+                    // Convert both row[column] and value to string before comparison
+                    const rowValue = row[column] ? row[column].toString().trim().toLowerCase() : "";
+                    const searchValue = value.toString().trim().toLowerCase();
+
+                    if (rowValue.includes(searchValue)) {
                         context.log(`✅ Match Found: ${JSON.stringify(row)}`);
                         results.push(row);
                     }
                 })
                 .on("end", () => {
-                    context.log(`✅ Found ${results.length} matching records in ${filename}`);
+                    if (results.length > 0) {
+                        context.log(`✅ Found ${results.length} matching records in ${filename}`);
+                    } else {
+                        context.log(`⚠️ No matching records found in ${filename}.`);
+                    }
                     resolve(results);
                 })
                 .on("error", (err) => {
-                    reject(new Error(`❌ CSV Parsing Failed: ${err.message}`));
+                    context.log(`❌ CSV Parsing Failed: ${err.message}`);
+                    reject(new Error(`CSV Parsing Failed: ${err.message}`));
                 });
         });
     } catch (error) {
@@ -191,14 +221,23 @@ async function searchDataset(context, filename, column, value) {
     }
 }
 
-
 /**
  * 📜 Converts the results into a readable response format.
  */
-function formatResults(results) {
-    return results.map(row => 
+function formatResults(results, context) {
+    if (!Array.isArray(results) || results.length === 0) {
+        return "No matching records found.";
+    }
+
+    const formattedResult = results.map(row => 
         Object.entries(row).map(([key, value]) => `**${key}**: ${value}`).join("\n")
     ).join("\n\n");
+
+    if (context) {
+        context.log(`📤 Returning formatted results:\n${formattedResult}`);
+    }
+
+    return formattedResult;
 }
 
 /**
