@@ -20,6 +20,7 @@ module.exports = async function (context, req) {
     try {
         // 🔎 Step 1: Identify dataset, column, and value using OpenAI
         const { dataset, column, value } = await analyzeUserQuery(userMessage, context);
+context.log(`🔍 Query Analysis Results: Dataset = ${dataset}, Column = ${column}, Value = ${value}`);
         
         if (dataset && column && value) {
             context.log(`📂 Attempting to fetch data from: ${dataset}, Column: ${column}, Value: ${value}`);
@@ -27,6 +28,7 @@ module.exports = async function (context, req) {
             try {
                 // 🔎 Step 2: Query the dataset
                 let searchResults = await searchDataset(context, dataset, column, value);
+                context.log(`📊 Search Results: ${JSON.stringify(searchResults)}`);
 
                 if (searchResults.length > 0) {
                     context.res = { status: 200, body: { message: formatResults(searchResults) } };
