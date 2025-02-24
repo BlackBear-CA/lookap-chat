@@ -13,38 +13,33 @@ module.exports = async function (context, req) {
     context.log("📩 Received user message:", userMessage);
 
     if (!userMessage) {
-        context.log("⚠️ No userMessage found in request body.");
         context.res = { status: 400, body: { message: "Error: No userMessage found in request body." } };
         return;
     }
 
     try {
-        // 🔎 Step 1: Use OpenAI to analyze user intent
+        // 🔎 Step 1: Use OpenAI to determine the dataset, column, and search value
         const { dataset, column, value } = await analyzeUserQuery(userMessage);
         if (dataset && column && value) {
-            context.log(`🔎 Identified dataset: ${dataset}, column: ${column}, value: ${value}`);
-            
-            try {
-                // 🔎 Step 2: Query the dataset
-                let searchResults = await searchDataset(context, dataset, column, value);
-                context.log("📄 Search Results:", JSON.stringify(searchResults));
+            context.log(`🔎 Query matches dataset: ${dataset}, column: ${column}, value: ${value}`);
 
+            try {
+                // 🔎 Step 2: Search the dataset for results
+                let searchResults = await searchDataset(context, dataset, column, value);
                 if (searchResults.length > 0) {
                     context.res = { status: 200, body: { message: formatResults(searchResults) } };
                     return;
                 } else {
-                    context.log(`⚠️ No records found for '${value}' in ${dataset}.`);
                     context.res = { status: 200, body: { message: `No records found for '${value}' in ${dataset}.` } };
                     return;
                 }
             } catch (error) {
-                context.log("❌ ERROR: searchDataset() failed:", error.message);
                 context.res = { status: 500, body: { message: "Error searching dataset: " + error.message } };
                 return;
             }
         }
 
-        // 🔎 Step 3: Fallback to OpenAI response if no dataset match
+        // 🔎 Step 3: If no structured query match, fallback to OpenAI for a response
         context.log("💡 Sending user message to OpenAI API...");
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
         const chatResponse = await openai.chat.completions.create({
@@ -53,12 +48,9 @@ module.exports = async function (context, req) {
         });
 
         const aiResponse = chatResponse.choices[0].message.content;
-        context.log("🤖 OpenAI Response:", aiResponse);
-
         context.res = { status: 200, body: { message: aiResponse } };
 
     } catch (error) {
-        context.log("❌ Error occurred:", error.message);
         context.res = { status: 500, body: { message: "Error processing request: " + error.message } };
     }
 };
@@ -70,8 +62,7 @@ async function analyzeUserQuery(userMessage) {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
-    Given the following datasets, determine which dataset should be queried, 
-    what column should be searched, and what value should be looked up.
+    You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
 
     Available datasets:
     - "barcodes.csv" (Generic barcode for SKUs)
@@ -82,13 +73,18 @@ async function analyzeUserQuery(userMessage) {
     - "stockPricingData.csv" (Moving average price of SKU)
     - "reservationData.csv" (Internal reservations for SKU)
 
-    User Query: "${userMessage}"
+    Your task:
+    - Identify which dataset should be queried.
+    - Identify the column where the data should be searched.
+    - Extract the search value (e.g., SKU ID, purchase order number).
 
-    Expected Output:
-    Return JSON in this format:
+    **User Query:** "${userMessage}"
+
+    **Response Format (MUST BE STRICT JSON):**
     {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10271"}
 
-    If no dataset match is found, return {"dataset": null, "column": null, "value": null}.
+    If no dataset match is found, return:
+    {"dataset": null, "column": null, "value": null}
     `;
 
     const response = await openai.chat.completions.create({
@@ -112,41 +108,28 @@ async function searchDataset(context, filename, column, value) {
         const containerClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER);
         const blobClient = containerClient.getBlobClient(filename);
 
-        context.log(`📂 Checking existence of ${filename} in Blob Storage...`);
-        const exists = await blobClient.exists();
-        if (!exists) {
+        if (!(await blobClient.exists())) {
             throw new Error(`File ${filename} not found.`);
         }
 
-        context.log(`⬇️ Downloading ${filename} from Blob Storage...`);
         const downloadResponse = await blobClient.download();
         const downloadedData = await streamToString(downloadResponse.readableStreamBody);
 
-        if (!downloadedData || downloadedData.trim() === "") {
-            throw new Error(`File ${filename} is empty or unreadable.`);
+        if (!downloadedData.trim()) {
+            throw new Error(`File ${filename} is empty.`);
         }
 
-        context.log(`📄 Parsing ${filename}...`);
+        let results = [];
+        csv.parseString(downloadedData, { headers: true, trim: true })
+            .on("data", (row) => {
+                if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
+                    results.push(row);
+                }
+            })
+            .on("end", () => context.log(`✅ Found ${results.length} records in ${filename}`));
 
-        return new Promise((resolve, reject) => {
-            let results = [];
-            csv.parseString(downloadedData, { headers: true, trim: true })
-                .on("data", (row) => {
-                    if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
-                        results.push(row);
-                    }
-                })
-                .on("end", () => {
-                    context.log(`✅ Found ${results.length} matching records in ${filename}`);
-                    resolve(results);
-                })
-                .on("error", (err) => {
-                    context.log(`❌ CSV Parsing Failed: ${err.message}`);
-                    reject(err);
-                });
-        });
+        return results;
     } catch (error) {
-        context.log("❌ Error processing dataset:", error.message);
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
 }
