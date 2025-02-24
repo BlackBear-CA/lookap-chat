@@ -19,7 +19,7 @@ module.exports = async function (context, req) {
 
     try {
         // 🔎 Step 1: Identify the dataset, column, and value using OpenAI
-        const { dataset, column, value } = await analyzeUserQuery(userMessage);
+        const { dataset, column, value } = await analyzeUserQuery(userMessage, context);
         
         if (dataset && column && value) {
             context.log(`📂 Attempting to fetch data from: ${dataset}, Column: ${column}, Value: ${value}`);
@@ -29,7 +29,7 @@ module.exports = async function (context, req) {
                 let searchResults = await searchDataset(context, dataset, column, value);
 
                 if (searchResults.length > 0) {
-                    context.res = { status: 200, body: { message: formatResults(searchResults) } };
+                    context.res = { status: 200, body: { message: formatResults(searchResults, context) } };
                     return;
                 } else {
                     context.res = { status: 200, body: { message: `No records found for '${value}' in ${dataset}.` } };
@@ -61,7 +61,8 @@ module.exports = async function (context, req) {
 /**
  * 🔍 Uses OpenAI to analyze user queries and determine dataset, column, and search value.
  */
-async function analyzeUserQuery(userMessage) {
+async function analyzeUserQuery(userMessage, context) { 
+    context.log("🔍 Analyzing user query using OpenAI...");
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
@@ -233,10 +234,7 @@ function formatResults(results, context) {
         Object.entries(row).map(([key, value]) => `**${key}**: ${value}`).join("\n")
     ).join("\n\n");
 
-    if (context) {
-        context.log(`📤 Returning formatted results:\n${formattedResult}`);
-    }
-
+    context.log(`📤 Returning formatted results:\n${formattedResult}`);
     return formattedResult;
 }
 
