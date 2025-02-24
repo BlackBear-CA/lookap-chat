@@ -107,13 +107,14 @@ async function analyzeUserQuery(userMessage) {
  */
 async function searchDataset(context, filename, column, value) {
     try {
+        context.log(`📂 Checking if ${filename} exists in Blob Storage...`);
         const blobServiceClient = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION_STRING);
         const containerClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER);
         const blobClient = containerClient.getBlobClient(filename);
 
-        context.log(`📂 Checking if ${filename} exists in Blob Storage...`);
         const exists = await blobClient.exists();
         if (!exists) {
+            context.log(`❌ ERROR: File ${filename} NOT FOUND.`);
             throw new Error(`File ${filename} not found.`);
         }
 
@@ -122,6 +123,7 @@ async function searchDataset(context, filename, column, value) {
         const downloadedData = await streamToString(downloadResponse.readableStreamBody);
 
         if (!downloadedData.trim()) {
+            context.log(`❌ ERROR: File ${filename} is empty.`);
             throw new Error(`File ${filename} is empty.`);
         }
 
@@ -137,8 +139,11 @@ async function searchDataset(context, filename, column, value) {
                     }
                 })
                 .on("data", (row) => {
+                    context.log(`🔹 Row Data: ${JSON.stringify(row)}`); // Log full row data
+
                     if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
                         results.push(row);
+                        context.log(`✅ Match Found: ${JSON.stringify(row)}`);
                     }
                 })
                 .on("end", () => {
