@@ -1,13 +1,10 @@
 const { BlobServiceClient } = require('@azure/storage-blob');
 const OpenAI = require('openai');
-const fs = require('fs');
 const csv = require('fast-csv');
-const path = require('path');
 
 const AZURE_STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DATASETS_CONTAINER = "datasets";
-const TEMP_DIR = "/tmp";  // Ensure this path is used in Azure Functions
 
 module.exports = async function (context, req) {
     context.log("🔹 Chat function triggered.");
@@ -25,7 +22,6 @@ module.exports = async function (context, req) {
     }
 
     const skuMatch = userMessage.match(/sku\s+(\d+)/i);
-    const poMatch = userMessage.match(/purchase order\s+(\d+)/i);
     const pumpMatch = userMessage.match(/where do we buy this pump/i);
 
     try {
@@ -39,7 +35,7 @@ module.exports = async function (context, req) {
             if (purchaseData.length > 0) {
                 const record = purchaseData[0];
                 const responseMessage = `Yes, there is a purchase order (${record.purchaseOrd}) for SKU ${skuId} with vendor ${record.vendorName}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`;
-                
+
                 context.log("✅ Responding with SKU details:", responseMessage);
                 context.res = { status: 200, body: { message: responseMessage } };
                 return;
@@ -59,7 +55,7 @@ module.exports = async function (context, req) {
             if (purchaseData.length > 0) {
                 const record = purchaseData[0];
                 const responseMessage = `We buy this pump from **${record.vendorName}** under Purchase Order **${record.purchaseOrd}**, ordered on **${record.doc_creation_date}**, with expected delivery on **${record.delivery_date}**.`;
-                
+
                 context.log("✅ Responding with Pump details:", responseMessage);
                 context.res = { status: 200, body: { message: responseMessage } };
                 return;
@@ -108,11 +104,15 @@ async function searchDataset(context, filename, column, value) {
 
         return new Promise((resolve, reject) => {
             let results = [];
-            fs.createReadStream(downloadedData)
-                .pipe(csv.parse({ headers: true }))
+
+            csv.parseString(downloadedData, { headers: true })
                 .on("data", (row) => {
-                    if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
-                        results.push(row);
+                    if (row[column] && typeof row[column] === "string") {
+                        if (row[column].toLowerCase().includes(value.toLowerCase())) {
+                            results.push(row);
+                        }
+                    } else {
+                        context.log(`⚠️ Column '${column}' missing in row:`, row);
                     }
                 })
                 .on("end", () => {
