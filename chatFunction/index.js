@@ -23,7 +23,6 @@ module.exports = async function (context, req) {
 
     // ✅ Improved SKU Regex Matching
     const skuMatch = userMessage.match(/\bsku(?:_id)?\s*(\d+)/i);
-    const pumpMatch = userMessage.match(/where do we buy this pump/i);
 
     try {
         if (skuMatch) {
@@ -49,6 +48,8 @@ module.exports = async function (context, req) {
                 }
             } catch (error) {
                 context.log("❌ ERROR: searchDataset() failed:", error.message);
+                context.res = { status: 500, body: { message: "Error searching dataset: " + error.message } };
+                return;
             }
         }
 
@@ -96,9 +97,20 @@ async function searchDataset(context, filename, column, value) {
 
         return new Promise((resolve, reject) => {
             let results = [];
+            let headers = [];
+            
             csv.parseString(downloadedData, { headers: true, trim: true })
+                .on("headers", (headerList) => {
+                    // ✅ Normalize column names to lowercase
+                    headers = headerList.map(h => h.trim().toLowerCase());
+                    context.log("✅ Normalized Headers:", headers);
+
+                    if (!headers.includes(column.toLowerCase())) {
+                        reject(new Error(`Column '${column}' not found in CSV headers: ${headers.join(", ")}`));
+                    }
+                })
                 .on("data", (row) => {
-                    // ✅ Normalize column names (trim spaces & lowercase)
+                    // ✅ Normalize row keys (lowercase & trimmed)
                     let normalizedRow = {};
                     Object.keys(row).forEach((key) => {
                         normalizedRow[key.trim().toLowerCase()] = row[key]?.toString().trim();
