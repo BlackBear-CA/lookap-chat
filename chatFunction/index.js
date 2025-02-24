@@ -22,7 +22,7 @@ module.exports = async function (context, req) {
         const { dataset, column, value } = await analyzeUserQuery(userMessage);
         
         if (dataset && column && value) {
-            context.log(`📂 Attempting to fetch data from Blob Storage: ${dataset}, Column: ${column}, Value: ${value}`);
+            context.log(`📂 Attempting to fetch data from: ${dataset}, Column: ${column}, Value: ${value}`);
 
             try {
                 // 🔎 Step 2: Query the dataset
@@ -36,6 +36,7 @@ module.exports = async function (context, req) {
                     return;
                 }
             } catch (error) {
+                context.log("❌ ERROR: searchDataset() failed:", error.message);
                 context.res = { status: 500, body: { message: "Error searching dataset: " + error.message } };
                 return;
             }
