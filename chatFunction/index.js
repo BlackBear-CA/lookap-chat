@@ -33,7 +33,7 @@ module.exports = async function (context, req) {
             let skuId = skuMatch[1];
             context.log(`🔎 SKU Query Detected: ${skuId}`);
 
-            let purchaseData = await searchDataset("purchaseRecords.csv", "sku_id", skuId);
+            let purchaseData = await searchDataset(context, "purchaseRecords.csv", "sku_id", skuId);
             context.log("📄 Purchase Data Found:", JSON.stringify(purchaseData));
 
             if (purchaseData.length > 0) {
@@ -53,7 +53,7 @@ module.exports = async function (context, req) {
         if (pumpMatch) {
             context.log("🔎 Pump Query Detected");
 
-            let purchaseData = await searchDataset("purchaseRecords.csv", "item_description", "pump");
+            let purchaseData = await searchDataset(context, "purchaseRecords.csv", "item_description", "pump");
             context.log("📄 Pump Purchase Data:", JSON.stringify(purchaseData));
 
             if (purchaseData.length > 0) {
@@ -87,49 +87,54 @@ module.exports = async function (context, req) {
     }
 };
 
-async function searchDataset(filename, column, value) {
+async function searchDataset(context, filename, column, value) {
     try {
         const blobServiceClient = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION_STRING);
-        const blobClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER).getBlobClient(filename);
+        const containerClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER);
+        const blobClient = containerClient.getBlobClient(filename);
 
         context.log(`📂 Checking existence of ${filename} in Blob Storage...`);
         const exists = await blobClient.exists();
         if (!exists) {
-            throw new Error(`File ${filename} not found in Blob Storage.`);
+            context.log(`❌ ERROR: File ${filename} NOT FOUND.`);
+            throw new Error(`File ${filename} not found.`);
         }
-
-        // Define the temporary path
-        const csvPath = path.join(TEMP_DIR, filename);
 
         context.log(`⬇️ Downloading ${filename} from Blob Storage...`);
         const downloadResponse = await blobClient.download();
+        const downloadedData = await streamToString(downloadResponse.readableStreamBody);
+
+        context.log(`📄 File ${filename} successfully downloaded, parsing CSV...`);
 
         return new Promise((resolve, reject) => {
-            const writeStream = fs.createWriteStream(csvPath);
-            downloadResponse.readableStreamBody.pipe(writeStream);
-
-            writeStream.on("finish", async () => {
-                context.log(`📄 Parsing ${filename} for column '${column}' with value '${value}'`);
-                let results = [];
-                fs.createReadStream(csvPath)
-                    .pipe(csv.parse({ headers: true }))
-                    .on("data", (row) => {
-                        if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
-                            results.push(row);
-                        }
-                    })
-                    .on("end", () => {
-                        context.log(`✅ Found ${results.length} matching records in ${filename}`);
-                        resolve(results);
-                    })
-                    .on("error", (err) => {
-                        context.log(`❌ Error reading CSV: ${err.message}`);
-                        reject(err);
-                    });
-            });
+            let results = [];
+            fs.createReadStream(downloadedData)
+                .pipe(csv.parse({ headers: true }))
+                .on("data", (row) => {
+                    if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
+                        results.push(row);
+                    }
+                })
+                .on("end", () => {
+                    context.log(`✅ Found ${results.length} matching records for '${value}' in ${filename}`);
+                    resolve(results);
+                })
+                .on("error", (err) => {
+                    context.log(`❌ ERROR: CSV Parsing Failed: ${err.message}`);
+                    reject(err);
+                });
         });
     } catch (error) {
         context.log("❌ Error processing dataset:", error.message);
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
+}
+
+async function streamToString(stream) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        stream.on("data", (chunk) => chunks.push(chunk));
+        stream.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        stream.on("error", reject);
+    });
 }
