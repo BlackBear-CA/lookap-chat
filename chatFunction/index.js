@@ -67,24 +67,36 @@ async function analyzeUserQuery(userMessage) {
     const prompt = `
     You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
 
-    Available datasets:
-    - "barcodes.csv" (Generic barcode for SKUs)
-    - "materialBasicData.csv" (Basic SKU details: description, manufacturer, part numbers)
-    - "purchaseRecords.csv" (Active purchase records: purchase order, vendor, date, delivery info)
-    - "warehouseData.csv" (Stock levels, storage bins, UOM)
-    - "stockTransactions.csv" (Material movements: purchases, goods issue, transfers)
-    - "stockPricingData.csv" (Moving average price of SKU)
-    - "reservationData.csv" (Internal reservations for SKU)
+    Available datasets and their key columns:
+    - "barcodes.csv" (Columns: sku_id, barcode)
+    - "materialBasicData.csv" (Columns: sku_id, item_description, manufacturer, part_number)
+    - "purchaseRecords.csv" (Columns: sku_id, purchase_order, vendor, doc_creation_date, delivery_date)
+    - "warehouseData.csv" (Columns: sku_id, soh, storage_bin, uom, inTransit)
+    - "stockTransactions.csv" (Columns: sku_id, transaction_type, quantity, date)
+    - "stockPricingData.csv" (Columns: sku_id, moving_avg_price)
+    - "reservationData.csv" (Columns: sku_id, reserved_quantity, reserved_date)
 
     Your task:
-    - Identify which dataset should be queried.
-    - Identify the column where the data should be searched.
+    - Identify the correct dataset based on the user query.
+    - Identify the correct column to search based on the context of the question.
     - Extract the search value (e.g., SKU ID, purchase order number).
+
+    Example User Query: "How many are in stock for SKU 10271?"
+    Expected Output:
+    {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
+
+    Example User Query: "What is the purchase order for SKU 10271?"
+    Expected Output:
+    {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10271"}
+
+    Example User Query: "What is the price of SKU 10005?"
+    Expected Output:
+    {"dataset": "stockPricingData.csv", "column": "sku_id", "value": "10005"}
 
     **User Query:** "${userMessage}"
 
     **Response Format (STRICT JSON):**
-    {"dataset": "warehouseData.csv", "column": "SKU", "value": "10271"}
+    {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
 
     If no dataset match is found, return:
     {"dataset": null, "column": null, "value": null}
@@ -101,6 +113,7 @@ async function analyzeUserQuery(userMessage) {
         return { dataset: null, column: null, value: null };
     }
 }
+
 
 /**
  * 📂 Queries the identified dataset for a matching record.
