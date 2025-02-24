@@ -67,35 +67,43 @@ async function analyzeUserQuery(userMessage) {
     const prompt = `
     You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
 
-    Available datasets and their key columns:
-    - "barcodes.csv" (Columns: sku_id, barcode)
-    - "materialBasicData.csv" (Columns: sku_id, item_description, manufacturer, part_number)
-    - "purchaseRecords.csv" (Columns: sku_id, purchase_order, vendor, doc_creation_date, delivery_date)
-    - "warehouseData.csv" (Columns: sku_id, soh, storage_bin, uom, inTransit)
-    - "stockTransactions.csv" (Columns: sku_id, transaction_type, quantity, date)
-    - "stockPricingData.csv" (Columns: sku_id, moving_avg_price)
-    - "reservationData.csv" (Columns: sku_id, reserved_quantity, reserved_date)
-
-    Your task:
-    - Identify the correct dataset based on the user query.
-    - Identify the correct column to search based on the context of the question.
-    - Extract the search value (e.g., SKU ID, purchase order number).
-
-    Example User Query: "How many are in stock for SKU 10271?"
-    Expected Output:
-    {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
-
-    Example User Query: "What is the purchase order for SKU 10271?"
-    Expected Output:
-    {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10271"}
-
-    Example User Query: "What is the price of SKU 10005?"
-    Expected Output:
-    {"dataset": "stockPricingData.csv", "column": "sku_id", "value": "10005"}
+    ## **Available Datasets & Column Mappings:**
+    - **barcodes.csv** (sku_id, barcode_uid)
+    - **materialBasicData.csv** (clientID, store, sku_id, item_description, detailed_description, manufacturer, mfg_part_nos, item_main_category, item_sub_category, materialReference)
+    - **missingItemReport.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, reportedBy, reportingDate)
+    - **mrpData.csv** (clientID, store, sku_id, item_description, stock_type, stock_status, mrpGRP, mrpType, mrpLot, stockCriticality, rop, maxStock, stockOwner, procurementInd, vendorLeadTime, receivingTime, materialMemo)
+    - **optimizerDataIBM.csv** (clientID, store, sku_id, item_description, movingCode, mrpType, mrpLot, rop, maxStock, optimizerROP, optimizerMaxStock, stockCriticality, clientStockImpact, stocklikelihood, stockOwner, stockSegment, soh, mrpGRP, stockoutCost, currentStockValue, autoClientImpact, inTransit, consignmentSOH, monthsOfStock, monthsOfExcess, actualStockouts, surplusValue, surplusQtyCalculated)
+    - **purchaseMaster.csv** (clientID, store, vendorID, sku_id, item_description, quotePrice, quoteReference, uom, currency)
+    - **purchaseRecords.csv** (clientID, store, purchaseOrd, doc_type, doc_status, doc_short_text, purchasingGRP, doc_creation_date, vendorName, vendorID, sku_id, item_description, order_qty, order_unit, net_price, currency, net_order_val, delivery_date, requisition_tracking)
+    - **reservationData.csv** (clientID, store, sku_id, item_description, requirement_date, reservationRef, maintenanceOrderRef, requirement_qty, goods_recipient)
+    - **stockCategoryReference.csv** (sub_category, main_category)
+    - **stockLogisticsData.csv** (clientID, store, sku_id, item_description, shipment_date, shipped_qty, shipping_reference, shipment_location, carrier, eta)
+    - **stockMaintenanceData.csv** (clientID, store, sku_id, item_description, detailed_description, manufacturer, mfg_part_nos, fitment, bom_structure, bom_qty, bom_grp, bom_id, bom_ref, plannerGroup)
+    - **stockOwnerReference.csv** (stockOwnerID, stockOwnerDescription)
+    - **stockPricingData.csv** (clientID, store, sku_id, item_description, uom, unit_price, currency, price_unit, stock_group, stock_class, stock_type, lastChangeDate)
+    - **stockTransactions.csv** (clientID, store, sku_id, item_description, transaction_ref, transaction_type, doc_reference, doc_type, doc_creation_date)
+    - **subscriberData.csv** (clientID, store, sku_id, item_description, subscriberName, subscriberEmail)
+    - **tableDirectory.csv** (tableID, tableName, previousName, tableDescription, scriptSource, lastChangeDate)
+    - **warehouseData.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, consignmentSOH, inTransit, rop, maxStock, mrpType)
 
     **User Query:** "${userMessage}"
 
-    **Response Format (STRICT JSON):**
+    **Your Task:**
+    - Identify which **dataset** should be queried.
+    - Identify the **correct column** where the data should be searched.
+    - Extract the **search value** (e.g., SKU ID, purchase order number, vendor name).
+
+    **Example User Queries & Expected Outputs:**
+    - **User Query:** "How many are in stock for SKU 10271?"
+      **Output:** {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
+    
+    - **User Query:** "Where do we buy SKU 10005?"
+      **Output:** {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10005"}
+    
+    - **User Query:** "What is the moving average price of SKU 10014?"
+      **Output:** {"dataset": "stockPricingData.csv", "column": "unit_price", "value": "10014"}
+
+    **Response Format (STRICT JSON ONLY):**
     {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
 
     If no dataset match is found, return:
@@ -113,7 +121,6 @@ async function analyzeUserQuery(userMessage) {
         return { dataset: null, column: null, value: null };
     }
 }
-
 
 /**
  * 📂 Queries the identified dataset for a matching record.
