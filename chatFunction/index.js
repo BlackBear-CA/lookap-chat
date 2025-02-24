@@ -167,9 +167,13 @@ async function searchDataset(context, filename, column, value) {
                         reject(new Error(`❌ CSV headers not properly read for ${filename}.`));
                     }
 
-                    context.log(`🔎 Checking row: ${JSON.stringify(row)}`);
+                    if (!row[column]) {
+                        context.log(`⚠️ Skipping row due to missing column '${column}': ${JSON.stringify(row)}`);
+                        return;
+                    }
 
-                    if (row[column] && row[column].toString().toLowerCase().includes(value.toLowerCase())) {
+                    if (row[column].toString().toLowerCase().includes(value.toLowerCase())) {
+                        context.log(`✅ Match Found: ${JSON.stringify(row)}`);
                         results.push(row);
                     }
                 })
@@ -186,6 +190,7 @@ async function searchDataset(context, filename, column, value) {
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
 }
+
 
 /**
  * 📜 Converts the results into a readable response format.
