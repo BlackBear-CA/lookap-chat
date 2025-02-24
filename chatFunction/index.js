@@ -223,19 +223,29 @@ async function searchDataset(context, filename, column, value) {
 }
 
 /**
- * 📜 Converts the results into a readable response format.
+ * 📜 Converts the results into a readable, conversational response.
  */
-function formatResults(results, context) {
+function formatResults(results) {
     if (!Array.isArray(results) || results.length === 0) {
-        return "No matching records found.";
+        return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
     }
 
-    const formattedResult = results.map(row => 
-        Object.entries(row).map(([key, value]) => `**${key}**: ${value}`).join("\n")
-    ).join("\n\n");
+    const row = results[0]; // Pick the first relevant result
 
-    context.log(`📤 Returning formatted results:\n${formattedResult}`);
-    return formattedResult;
+    // Extract relevant details with fallbacks
+    const sku = row.sku_id || "Unknown SKU";
+    const stock = row.soh || "0";
+    const unit = row.uom || "units";
+    const description = row.item_description || "No description available";
+
+    // Natural language responses
+    const responses = [
+        `I found SKU **${sku}** (${description}). Right now, we have **${stock} ${unit}** available. Need anything else? 😊`,
+        `Looks like SKU **${sku}** (${description}) has **${stock} ${unit}** in stock. Let me know if you need more details! 🚀`,
+        `For SKU **${sku}** (${description}), we currently have **${stock} ${unit}** in stock. Anything else I can help with? 😊`
+    ];
+
+    return responses[Math.floor(Math.random() * responses.length)]; // Pick a random response
 }
 
 /**
