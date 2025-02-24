@@ -18,7 +18,7 @@ module.exports = async function (context, req) {
     }
 
     try {
-        // 🔎 Step 1: Identify the dataset, column, and value using OpenAI
+        // 🔎 Step 1: Identify dataset, column, and value using OpenAI
         const { dataset, column, value } = await analyzeUserQuery(userMessage, context);
         
         if (dataset && column && value) {
@@ -29,12 +29,11 @@ module.exports = async function (context, req) {
                 let searchResults = await searchDataset(context, dataset, column, value);
 
                 if (searchResults.length > 0) {
-                    context.res = { status: 200, body: { message: formatResults(searchResults, context) } };
-                    return;
+                    context.res = { status: 200, body: { message: formatResults(searchResults) } };
                 } else {
-                    context.res = { status: 200, body: { message: `No records found for '${value}' in ${dataset}.` } };
-                    return;
+                    context.res = { status: 200, body: { message: `I couldn’t find any records for '${value}' in our database. Let me know if I can help with anything else!` } };
                 }
+                return;
             } catch (error) {
                 context.log("❌ ERROR: searchDataset() failed:", error.message);
                 context.res = { status: 500, body: { message: "Error searching dataset: " + error.message } };
@@ -50,7 +49,7 @@ module.exports = async function (context, req) {
             messages: [{ role: "user", content: userMessage }]
         });
 
-        const aiResponse = chatResponse.choices[0].message.content;
+        const aiResponse = chatResponse.choices[0]?.message?.content || "I’m not sure about that, but let me know how else I can help!";
         context.res = { status: 200, body: { message: aiResponse } };
 
     } catch (error) {
@@ -66,49 +65,30 @@ async function analyzeUserQuery(userMessage, context) {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
-    You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
-
-    ## **Available Datasets & Column Mappings:**
-    - **barcodes.csv** (sku_id, barcode_uid)
-    - **materialBasicData.csv** (clientID, store, sku_id, item_description, detailed_description, manufacturer, mfg_part_nos, item_main_category, item_sub_category, materialReference)
-    - **missingItemReport.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, reportedBy, reportingDate)
-    - **mrpData.csv** (clientID, store, sku_id, item_description, stock_type, stock_status, mrpGRP, mrpType, mrpLot, stockCriticality, rop, maxStock, stockOwner, procurementInd, vendorLeadTime, receivingTime, materialMemo)
-    - **optimizerDataIBM.csv** (clientID, store, sku_id, item_description, movingCode, mrpType, mrpLot, rop, maxStock, optimizerROP, optimizerMaxStock, stockCriticality, clientStockImpact, stocklikelihood, stockOwner, stockSegment, soh, mrpGRP, stockoutCost, currentStockValue, autoClientImpact, inTransit, consignmentSOH, monthsOfStock, monthsOfExcess, actualStockouts, surplusValue, surplusQtyCalculated)
-    - **purchaseMaster.csv** (clientID, store, vendorID, sku_id, item_description, quotePrice, quoteReference, uom, currency)
-    - **purchaseRecords.csv** (clientID, store, purchaseOrd, doc_type, doc_status, doc_short_text, purchasingGRP, doc_creation_date, vendorName, vendorID, sku_id, item_description, order_qty, order_unit, net_price, currency, net_order_val, delivery_date, requisition_tracking)
-    - **reservationData.csv** (clientID, store, sku_id, item_description, requirement_date, reservationRef, maintenanceOrderRef, requirement_qty, goods_recipient)
-    - **stockCategoryReference.csv** (sub_category, main_category)
-    - **stockLogisticsData.csv** (clientID, store, sku_id, item_description, shipment_date, shipped_qty, shipping_reference, shipment_location, carrier, eta)
-    - **stockMaintenanceData.csv** (clientID, store, sku_id, item_description, detailed_description, manufacturer, mfg_part_nos, fitment, bom_structure, bom_qty, bom_grp, bom_id, bom_ref, plannerGroup)
-    - **stockOwnerReference.csv** (stockOwnerID, stockOwnerDescription)
-    - **stockPricingData.csv** (clientID, store, sku_id, item_description, uom, unit_price, currency, price_unit, stock_group, stock_class, stock_type, lastChangeDate)
-    - **stockTransactions.csv** (clientID, store, sku_id, item_description, transaction_ref, transaction_type, doc_reference, doc_type, doc_creation_date)
-    - **subscriberData.csv** (clientID, store, sku_id, item_description, subscriberName, subscriberEmail)
-    - **tableDirectory.csv** (tableID, tableName, previousName, tableDescription, scriptSource, lastChangeDate)
-    - **warehouseData.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, consignmentSOH, inTransit, rop, maxStock, mrpType)
+    You are an AI assistant helping users query structured data from CSV datasets. Users may provide vague queries like "Where do we buy this?" referring to an item they are viewing. 
+    If a user includes an SKU ID in their question, ensure it is used for lookup.
 
     **User Query:** "${userMessage}"
 
     **Your Task:**
-    - Identify which **dataset** should be queried.
-    - Identify the **correct column** where the data should be searched.
+    - Identify the **dataset** to query.
+    - Identify the **correct column** for searching.
     - Extract the **search value** (e.g., SKU ID, purchase order number, vendor name).
+    - Ensure **conversational responses**.
 
-    **Example User Queries & Expected Outputs:**
+    **Example Queries & Responses:**
     - **User Query:** "How many are in stock for SKU 10271?"
-      **Output:** {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
-    
+      **Response:** "We currently have 1 unit in stock, stored in bin CS1-11-J-END. Let me know if you need more details!"
+
     - **User Query:** "Where do we buy SKU 10005?"
-      **Output:** {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10005"}
-    
-    - **User Query:** "What is the moving average price of SKU 10014?"
-      **Output:** {"dataset": "stockPricingData.csv", "column": "unit_price", "value": "10014"}
+      **Response:** "This SKU is purchased from our trusted suppliers. Want supplier details?"
 
-    **Response Format (STRICT JSON ONLY):**
-    {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
+    - **User Query:** "Where do we buy this pump?" *(Referring to SKU: 10271)*
+      **Response:** "This pump is sourced from Pioneer. Would you like me to pull up purchasing records for you?"
 
-    If no dataset match is found, return:
-    {"dataset": null, "column": null, "value": null}
+    **If no relevant data is found, respond with:**
+    - "I couldn’t find that in our records, but I can help with something else!"
+    - "I'm not sure about that one, but I can check another SKU for you!"
     `;
 
     try {
@@ -122,17 +102,8 @@ async function analyzeUserQuery(userMessage, context) {
             return { dataset: null, column: null, value: null };
         }
 
-        const responseText = response.choices[0].message.content;
-        context.log(`📩 OpenAI Response: ${responseText}`);
+        return { responseText: response.choices[0].message.content };
 
-        const parsedResponse = JSON.parse(responseText);
-
-        if (!parsedResponse.dataset || !parsedResponse.column || !parsedResponse.value) {
-            context.log("⚠️ OpenAI response missing dataset, column, or value:", parsedResponse);
-            return { dataset: null, column: null, value: null };
-        }
-
-        return parsedResponse;
     } catch (error) {
         context.log(`❌ OpenAI API Error: ${error.message}`);
         return { dataset: null, column: null, value: null };
@@ -149,9 +120,8 @@ async function searchDataset(context, filename, column, value) {
         const blobClient = containerClient.getBlobClient(filename);
 
         context.log(`📂 Checking if ${filename} exists in Blob Storage...`);
-        const exists = await blobClient.exists();
-        if (!exists) {
-            throw new Error(`❌ File ${filename} not found in Blob Storage.`);
+        if (!await blobClient.exists()) {
+            throw new Error(`❌ File ${filename} not found.`);
         }
 
         context.log(`⬇️ Downloading ${filename} from Blob Storage...`);
@@ -162,59 +132,16 @@ async function searchDataset(context, filename, column, value) {
             throw new Error(`⚠️ File ${filename} is empty.`);
         }
 
-        context.log(`📄 Parsing ${filename} with CSV headers check...`);
-
         return new Promise((resolve, reject) => {
             let results = [];
-            let headersChecked = false;
-            let allHeaders = [];
-
             csv.parseString(downloadedData, { headers: true, trim: true })
-                .on("headers", (headers) => {
-                    allHeaders = headers;
-                    context.log(`✅ CSV Headers in ${filename}: ${headers.join(", ")}`);
-
-                    if (!headers.includes(column)) {
-                        context.log(`❌ Column '${column}' not found in ${filename}. Available columns: ${headers.join(", ")}`);
-                        reject(new Error(`Column '${column}' not found in ${filename}.`));
-                        return;
-                    }
-                    headersChecked = true;
-                })
                 .on("data", (row) => {
-                    if (!headersChecked) {
-                        context.log(`❌ CSV headers not properly read for ${filename}.`);
-                        reject(new Error(`CSV headers not properly read for ${filename}.`));
-                        return;
-                    }
-
-                    // Ensure the column exists in the row
-                    if (!(column in row)) {
-                        context.log(`⚠️ Skipping row due to missing column '${column}': ${JSON.stringify(row)}`);
-                        return;
-                    }
-
-                    // Convert both row[column] and value to string before comparison
-                    const rowValue = row[column] ? row[column].toString().trim().toLowerCase() : "";
-                    const searchValue = value.toString().trim().toLowerCase();
-
-                    if (rowValue.includes(searchValue)) {
-                        context.log(`✅ Match Found: ${JSON.stringify(row)}`);
+                    if (row[column] && row[column].toString().toLowerCase().includes(value.toLowerCase())) {
                         results.push(row);
                     }
                 })
-                .on("end", () => {
-                    if (results.length > 0) {
-                        context.log(`✅ Found ${results.length} matching records in ${filename}`);
-                    } else {
-                        context.log(`⚠️ No matching records found in ${filename}.`);
-                    }
-                    resolve(results);
-                })
-                .on("error", (err) => {
-                    context.log(`❌ CSV Parsing Failed: ${err.message}`);
-                    reject(new Error(`CSV Parsing Failed: ${err.message}`));
-                });
+                .on("end", () => resolve(results))
+                .on("error", reject);
         });
     } catch (error) {
         context.log(`❌ Error processing dataset ${filename}: ${error.message}`);
@@ -223,29 +150,26 @@ async function searchDataset(context, filename, column, value) {
 }
 
 /**
- * 📜 Converts the results into a readable, conversational response.
+ * 📜 Converts the results into a conversational response.
  */
 function formatResults(results) {
-    if (!Array.isArray(results) || results.length === 0) {
+    if (!results.length) {
         return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
     }
 
-    const row = results[0]; // Pick the first relevant result
-
-    // Extract relevant details with fallbacks
+    const row = results[0];
     const sku = row.sku_id || "Unknown SKU";
     const stock = row.soh || "0";
     const unit = row.uom || "units";
     const description = row.item_description || "No description available";
 
-    // Natural language responses
     const responses = [
-        `I found SKU **${sku}** (${description}). Right now, we have **${stock} ${unit}** available. Need anything else? 😊`,
-        `Looks like SKU **${sku}** (${description}) has **${stock} ${unit}** in stock. Let me know if you need more details! 🚀`,
-        `For SKU **${sku}** (${description}), we currently have **${stock} ${unit}** in stock. Anything else I can help with? 😊`
+        `I found SKU **${sku}** (${description}). We have **${stock} ${unit}** in stock. Need anything else? 😊`,
+        `SKU **${sku}** (${description}) currently has **${stock} ${unit}** in stock. Let me know if you need more details! 🚀`,
+        `For SKU **${sku}** (${description}), there are **${stock} ${unit}** available. Anything else I can help with? 😊`
     ];
 
-    return responses[Math.floor(Math.random() * responses.length)]; // Pick a random response
+    return responses[Math.floor(Math.random() * responses.length)];
 }
 
 /**
