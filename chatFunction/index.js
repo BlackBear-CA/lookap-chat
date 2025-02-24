@@ -37,7 +37,7 @@ module.exports = async function (context, req) {
 
                 if (purchaseData.length > 0) {
                     const record = purchaseData[0];
-                    const responseMessage = `Yes, there is a purchase order (${record.purchaseOrd}) for SKU ${skuId} with vendor ${record.vendorName}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`;
+                    const responseMessage = `Yes, there is a purchase order (${record.purchaseord}) for SKU ${skuId} with vendor ${record.vendorname}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`;
                     
                     context.log("✅ Responding with SKU details:", responseMessage);
                     context.res = { status: 200, body: { message: responseMessage } };
@@ -96,14 +96,21 @@ async function searchDataset(context, filename, column, value) {
 
         return new Promise((resolve, reject) => {
             let results = [];
-            csv.parseString(downloadedData, { headers: true })
+            csv.parseString(downloadedData, { headers: true, trim: true })
                 .on("data", (row) => {
-                    if (!row[column]) {
-                        context.log(`⚠️ Column '${column}' missing in row, skipping:`, row);
+                    // ✅ Normalize column names (trim spaces & lowercase)
+                    let normalizedRow = {};
+                    Object.keys(row).forEach((key) => {
+                        normalizedRow[key.trim().toLowerCase()] = row[key]?.toString().trim();
+                    });
+
+                    if (!normalizedRow[column.toLowerCase()]) {
+                        context.log(`⚠️ Column '${column}' missing in row, skipping:`, normalizedRow);
                         return;
                     }
-                    if (row[column].toLowerCase().includes(value.toLowerCase())) {
-                        results.push(row);
+
+                    if (normalizedRow[column.toLowerCase()].toLowerCase().includes(value.toLowerCase())) {
+                        results.push(normalizedRow);
                     }
                 })
                 .on("end", () => {
