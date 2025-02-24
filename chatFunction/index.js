@@ -14,36 +14,27 @@ module.exports = async function (context, req) {
 
     if (!userMessage) {
         context.log("⚠️ No userMessage found in request body.");
-        context.res = {
-            status: 400,
-            body: { message: "Error: No userMessage found in request body." }
-        };
+        context.res = { status: 400, body: { message: "Error: No userMessage found in request body." } };
         return;
     }
 
-    // ✅ Improved SKU Regex Matching
-    const skuMatch = userMessage.match(/\bsku(?:_id)?\s*(\d+)/i);
-
     try {
-        if (skuMatch) {
-            let skuId = skuMatch[1];
-            context.log(`🔎 SKU Query Detected: ${skuId}`);
-
+        // 🔎 Step 1: Use OpenAI to analyze user intent
+        const { dataset, column, value } = await analyzeUserQuery(userMessage);
+        if (dataset && column && value) {
+            context.log(`🔎 Identified dataset: ${dataset}, column: ${column}, value: ${value}`);
+            
             try {
-                context.log(`🔎 Calling searchDataset() for SKU: ${skuId}`);
-                let purchaseData = await searchDataset(context, "purchaseRecords.csv", "sku_id", skuId);
-                context.log("📄 Purchase Data Found:", JSON.stringify(purchaseData));
+                // 🔎 Step 2: Query the dataset
+                let searchResults = await searchDataset(context, dataset, column, value);
+                context.log("📄 Search Results:", JSON.stringify(searchResults));
 
-                if (purchaseData.length > 0) {
-                    const record = purchaseData[0];
-                    const responseMessage = `Yes, there is a purchase order (${record.purchaseord}) for SKU ${skuId} with vendor ${record.vendorname}, ordered on ${record.doc_creation_date}, and delivery is expected on ${record.delivery_date}.`;
-                    
-                    context.log("✅ Responding with SKU details:", responseMessage);
-                    context.res = { status: 200, body: { message: responseMessage } };
+                if (searchResults.length > 0) {
+                    context.res = { status: 200, body: { message: formatResults(searchResults) } };
                     return;
                 } else {
-                    context.log(`⚠️ No purchase order found for SKU ${skuId}.`);
-                    context.res = { status: 200, body: { message: `No purchase order found for SKU ${skuId}.` } };
+                    context.log(`⚠️ No records found for '${value}' in ${dataset}.`);
+                    context.res = { status: 200, body: { message: `No records found for '${value}' in ${dataset}.` } };
                     return;
                 }
             } catch (error) {
@@ -53,7 +44,7 @@ module.exports = async function (context, req) {
             }
         }
 
-        // ✅ Ensure OpenAI is only used as a fallback
+        // 🔎 Step 3: Fallback to OpenAI response if no dataset match
         context.log("💡 Sending user message to OpenAI API...");
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
         const chatResponse = await openai.chat.completions.create({
@@ -65,13 +56,56 @@ module.exports = async function (context, req) {
         context.log("🤖 OpenAI Response:", aiResponse);
 
         context.res = { status: 200, body: { message: aiResponse } };
+
     } catch (error) {
         context.log("❌ Error occurred:", error.message);
         context.res = { status: 500, body: { message: "Error processing request: " + error.message } };
     }
 };
 
-// ✅ Fix: Ensure searchDataset() handles missing columns properly
+/**
+ * 🔍 Uses OpenAI to analyze user queries and determine dataset, column, and search value.
+ */
+async function analyzeUserQuery(userMessage) {
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+    const prompt = `
+    Given the following datasets, determine which dataset should be queried, 
+    what column should be searched, and what value should be looked up.
+
+    Available datasets:
+    - "barcodes.csv" (Generic barcode for SKUs)
+    - "materialBasicData.csv" (Basic SKU details: description, manufacturer, part numbers)
+    - "purchaseRecords.csv" (Active purchase records: purchase order, vendor, date, delivery info)
+    - "warehouseData.csv" (Stock levels, storage bins, UOM)
+    - "stockTransactions.csv" (Material movements: purchases, goods issue, transfers)
+    - "stockPricingData.csv" (Moving average price of SKU)
+    - "reservationData.csv" (Internal reservations for SKU)
+
+    User Query: "${userMessage}"
+
+    Expected Output:
+    Return JSON in this format:
+    {"dataset": "purchaseRecords.csv", "column": "sku_id", "value": "10271"}
+
+    If no dataset match is found, return {"dataset": null, "column": null, "value": null}.
+    `;
+
+    const response = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [{ role: "system", content: prompt }]
+    });
+
+    try {
+        return JSON.parse(response.choices[0].message.content);
+    } catch {
+        return { dataset: null, column: null, value: null };
+    }
+}
+
+/**
+ * 📂 Queries the identified dataset for a matching record.
+ */
 async function searchDataset(context, filename, column, value) {
     try {
         const blobServiceClient = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION_STRING);
@@ -88,7 +122,6 @@ async function searchDataset(context, filename, column, value) {
         const downloadResponse = await blobClient.download();
         const downloadedData = await streamToString(downloadResponse.readableStreamBody);
 
-        // ✅ Ensure data is valid before parsing
         if (!downloadedData || downloadedData.trim() === "") {
             throw new Error(`File ${filename} is empty or unreadable.`);
         }
@@ -97,36 +130,14 @@ async function searchDataset(context, filename, column, value) {
 
         return new Promise((resolve, reject) => {
             let results = [];
-            let headers = [];
-            
             csv.parseString(downloadedData, { headers: true, trim: true })
-                .on("headers", (headerList) => {
-                    // ✅ Normalize column names to lowercase
-                    headers = headerList.map(h => h.trim().toLowerCase());
-                    context.log("✅ Normalized Headers:", headers);
-
-                    if (!headers.includes(column.toLowerCase())) {
-                        reject(new Error(`Column '${column}' not found in CSV headers: ${headers.join(", ")}`));
-                    }
-                })
                 .on("data", (row) => {
-                    // ✅ Normalize row keys (lowercase & trimmed)
-                    let normalizedRow = {};
-                    Object.keys(row).forEach((key) => {
-                        normalizedRow[key.trim().toLowerCase()] = row[key]?.toString().trim();
-                    });
-
-                    if (!normalizedRow[column.toLowerCase()]) {
-                        context.log(`⚠️ Column '${column}' missing in row, skipping:`, normalizedRow);
-                        return;
-                    }
-
-                    if (normalizedRow[column.toLowerCase()].toLowerCase().includes(value.toLowerCase())) {
-                        results.push(normalizedRow);
+                    if (row[column] && row[column].toLowerCase().includes(value.toLowerCase())) {
+                        results.push(row);
                     }
                 })
                 .on("end", () => {
-                    context.log(`✅ Found ${results.length} matching records for '${value}' in ${filename}`);
+                    context.log(`✅ Found ${results.length} matching records in ${filename}`);
                     resolve(results);
                 })
                 .on("error", (err) => {
@@ -140,6 +151,18 @@ async function searchDataset(context, filename, column, value) {
     }
 }
 
+/**
+ * 📜 Converts the results into a readable response format.
+ */
+function formatResults(results) {
+    return results.map(row => 
+        Object.entries(row).map(([key, value]) => `**${key}**: ${value}`).join("\n")
+    ).join("\n\n");
+}
+
+/**
+ * 📥 Converts a readable stream into a string.
+ */
 async function streamToString(stream) {
     return new Promise((resolve, reject) => {
         const chunks = [];
