@@ -19,11 +19,15 @@ module.exports = async function (context, req) {
 
     try {
         // 🔎 Step 1: Identify dataset, column, and value using OpenAI
-        const { dataset, column, value } = await analyzeUserQuery(userMessage, context);
-context.log(`🔍 Query Analysis Results: Dataset = ${dataset}, Column = ${column}, Value = ${value}`);
-        
+        const queryResult = await analyzeUserQuery(userMessage, context);
+        const dataset = queryResult.dataset || null;
+        const column = queryResult.column || null;
+        const value = queryResult.value || null;
+
+        context.log(`🔍 Query Analysis Results: Dataset = ${dataset}, Column = ${column}, Value = ${value}`);
+
         if (dataset && column && value) {
-            context.log(`📂 Attempting to fetch data from: ${dataset}, Column: ${column}, Value: ${value}`);
+            context.log(`📂 Fetching data from: ${dataset}, Column: ${column}, Value: ${value}`);
 
             try {
                 // 🔎 Step 2: Query the dataset
@@ -33,7 +37,7 @@ context.log(`🔍 Query Analysis Results: Dataset = ${dataset}, Column = ${colum
                 if (searchResults.length > 0) {
                     context.res = { status: 200, body: { message: formatResults(searchResults) } };
                 } else {
-                    context.res = { status: 200, body: { message: `I couldn’t find any records for '${value}' in our database. Let me know if I can help with anything else!` } };
+                    context.res = { status: 200, body: { message: `I couldn’t find any records for '${value}'. Let me know if I can help with anything else!` } };
                 }
                 return;
             } catch (error) {
@@ -46,6 +50,7 @@ context.log(`🔍 Query Analysis Results: Dataset = ${dataset}, Column = ${colum
         // 🔎 Step 3: If no structured query match, fallback to OpenAI chat response
         context.log("💡 Sending user message to OpenAI API...");
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
         const chatResponse = await openai.chat.completions.create({
             model: "gpt-4",
             messages: [{ role: "user", content: userMessage }]
@@ -67,31 +72,28 @@ async function analyzeUserQuery(userMessage, context) {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
-    You are an AI assistant helping users query structured data from CSV datasets. Users may provide vague queries like "Where do we buy this?" referring to an item they are viewing. 
-    If a user includes an SKU ID in their question, ensure it is used for lookup.
+You are an AI assistant that helps users query structured data from our inventory and purchasing records.
+Ensure responses are conversational but still retrieve structured data when relevant.
 
-    **User Query:** "${userMessage}"
+**User Query:** "${userMessage}"
 
-    **Your Task:**
-    - Identify the **dataset** to query.
-    - Identify the **correct column** for searching.
-    - Extract the **search value** (e.g., SKU ID, purchase order number, vendor name).
-    - Ensure **conversational responses**.
+**Your Task:**
+- If the user is asking about an item in stock, identify the **warehouse dataset** and return relevant stock levels.
+- If the user is asking about purchasing information, return **vendor or purchasing history**.
+- If the query is general, respond conversationally but **pull data when needed**.
 
-    **Example Queries & Responses:**
-    - **User Query:** "How many are in stock for SKU 10271?"
-      **Response:** "We currently have 1 unit in stock, stored in bin CS1-11-J-END. Let me know if you need more details!"
+**Example Queries & Responses:**
+- **User Query:** "How many are in stock for SKU 10271?"
+  **Response:** "We currently have 1 unit in stock, stored in bin CS1-11-J-END."
 
-    - **User Query:** "Where do we buy SKU 10005?"
-      **Response:** "This SKU is purchased from our trusted suppliers. Want supplier details?"
+- **User Query:** "Where do we buy SKU 10005?"
+  **Response:** "This SKU is purchased from our trusted suppliers. Want supplier details?"
 
-    - **User Query:** "Where do we buy this pump?" *(Referring to SKU: 10271)*
-      **Response:** "This pump is sourced from Pioneer. Would you like me to pull up purchasing records for you?"
+- **User Query:** "Where do we buy this pump?" *(Referring to SKU: 10271)*
+  **Response:** "This pump is sourced from Pioneer. Would you like me to pull up purchasing records for you?"
 
-    **If no relevant data is found, respond with:**
-    - "I couldn’t find that in our records, but I can help with something else!"
-    - "I'm not sure about that one, but I can check another SKU for you!"
-    `;
+Your response should be conversational. If you retrieve data, format it in **natural language**.
+`;
 
     try {
         const response = await openai.chat.completions.create({
@@ -99,12 +101,18 @@ async function analyzeUserQuery(userMessage, context) {
             messages: [{ role: "system", content: prompt }]
         });
 
-        if (!response.choices || response.choices.length === 0) {
-            context.log("⚠️ OpenAI response is empty.");
+        if (!response.choices || response.choices.length === 0 || !response.choices[0].message.content) {
+            context.log("⚠️ OpenAI response is empty or malformed.");
             return { dataset: null, column: null, value: null };
         }
 
-        return { responseText: response.choices[0].message.content };
+        try {
+            const parsedResponse = JSON.parse(response.choices[0].message.content);
+            return parsedResponse;
+        } catch (parseError) {
+            context.log("⚠️ Failed to parse OpenAI response. Falling back to general conversation.");
+            return { dataset: null, column: null, value: null };
+        }
 
     } catch (error) {
         context.log(`❌ OpenAI API Error: ${error.message}`);
@@ -172,16 +180,4 @@ function formatResults(results) {
     ];
 
     return responses[Math.floor(Math.random() * responses.length)];
-}
-
-/**
- * 📥 Converts a readable stream into a string.
- */
-async function streamToString(stream) {
-    return new Promise((resolve, reject) => {
-        const chunks = [];
-        stream.on("data", (chunk) => chunks.push(chunk));
-        stream.on("end", () => resolve(Buffer.concat(chunks).toString()));
-        stream.on("error", reject);
-    });
 }
