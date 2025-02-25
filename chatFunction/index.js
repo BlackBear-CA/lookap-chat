@@ -228,36 +228,28 @@ async function searchDataset(context, filename, column, value) {
  */
 function formatResults(results, column) {
     if (!Array.isArray(results) || results.length === 0) {
-        return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
+        return "I couldn't find any matching records. Would you like me to check something else?";
     }
 
-    // Debugging: Ensure column is a valid string
-    if (typeof column !== "string") {
-        console.error("❌ Invalid column type:", column); // Log issue
-        return "Lookapp AI: There was an issue retrieving the requested information. Please try again.";
+    // If multiple results are found, list the most relevant ones
+    if (results.length > 1) {
+        let response = "Here are the available SKUs for pumps:\n";
+        results.forEach((row, index) => {
+            const sku = row.sku_id || "Unknown SKU";
+            const description = row.item_description || "No description available";
+            response += `${index + 1}. SKU **${sku}** - ${description}\n`;
+        });
+        return response + "Let me know if you need more details on a specific item!";
     }
 
-    const row = results[0]; // Pick the most relevant result
-    const requestedValue = row[column] || "Unknown"; // Get value dynamically
+    // If only one result is found, format the response accordingly
+    const row = results[0];
+    const sku = row.sku_id || "Unknown SKU";
+    const description = row.item_description || "No description available";
+    const manufacturer = row.manufacturer || "Unknown Manufacturer";
+    const referenceLink = row.materialReference ? `\nYou can check more details here: ${row.materialReference}` : "";
 
-    // Handle stock-related queries
-    if (column === "soh") {
-        return `Lookapp AI: The current stock on hand is ${requestedValue}. Let me know if you need more details.`;
-    }
-
-    // Ensure correct referencing for other known columns
-    switch (column) {
-        case "storage_bin":
-            return `Lookapp AI: The item is stored in bin ${requestedValue}. Do you need help locating it?`;
-        case "unit_price":
-            return `Lookapp AI: The most recent price for this item is $${requestedValue} per unit. Let me know if you need more pricing details.`;
-        case "vendorID":
-            return `Lookapp AI: This item is typically purchased from Vendor ID ${requestedValue}. Would you like supplier details?`;
-        case "order_qty":
-            return `Lookapp AI: The last purchase order for this item was for ${requestedValue} units. Would you like to see more order history?`;
-        default:
-            return `Lookapp AI: The requested information for '${column}' is ${requestedValue}. Let me know if you need anything else.`;
-    }
+    return `I found SKU **${sku}** (${description}) from **${manufacturer}**.${referenceLink}\nLet me know if you need anything else!`;
 }
 
 /**
