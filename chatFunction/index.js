@@ -222,19 +222,25 @@ async function searchDataset(context, filename, column, value) {
 }
 
 /**
- * 📜 Converts the results into a readable response format.
+ * 📜 Converts the results into a conversational response.
  */
-function formatResults(results, context) {
-    if (!Array.isArray(results) || results.length === 0) {
-        return "No matching records found.";
+function formatResults(results) {
+    if (!results.length) {
+        return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
     }
 
-    const formattedResult = results.map(row => 
-        Object.entries(row).map(([key, value]) => `**${key}**: ${value}`).join("\n")
-    ).join("\n\n");
+    const row = results[0]; // Pick the first relevant result
 
-    context.log(`📤 Returning formatted results:\n${formattedResult}`);
-    return formattedResult;
+    // Extract relevant details with fallbacks
+    const sku = row.sku_id || "Unknown SKU";
+    const stock = row.soh || "0";
+    const unit = row.uom || "units";
+    const description = row.item_description || "No description available";
+    const bin = row.storage_bin || "No bin assigned";
+    const store = row.store || "Unknown store";
+
+    // Generate a friendly conversational response
+    return `I found SKU **${sku}** (${description}) in **${store}**. We currently have **${stock} ${unit}** available, stored in **bin ${bin}**. Let me know if you need anything else! 😊`;
 }
 
 /**
