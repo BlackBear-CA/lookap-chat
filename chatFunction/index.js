@@ -227,24 +227,19 @@ async function searchDataset(context, filename, column, value) {
  * 📜 Converts the results into a conversational response.
  */
 function formatResults(results, column) {
-    if (!results.length) {
-        return "I couldn't find any matching records. Would you like me to check something else?";
+    if (!Array.isArray(results) || results.length === 0) {
+        return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
     }
 
-    if (typeof column !== "string") {
-        console.error("❌ Invalid column value:", column); // Debugging log
-        return "Lookapp AI: There was an issue retrieving the requested information. Please try again.";
-    }
-
-    const row = results[0]; // Get the first relevant result
+    const row = results[0]; // Pick the most relevant result
     const requestedValue = row[column] || "Unknown"; // Get value dynamically
 
-    // Handle stock queries
+    // Handle stock-related queries
     if (column === "soh") {
-        return `Lookapp AI: The current stock on hand is a quantity of ${requestedValue} . Let me know if you need more details.`;
+        return `Lookapp AI: The current stock on hand is ${requestedValue}. Let me know if you need more details.`;
     }
 
-    // Ensure correct referencing for other known columns
+    // Ensure correct referencing for other common columns
     switch (column) {
         case "storage_bin":
             return `Lookapp AI: The item is stored in bin ${requestedValue}. Do you need help locating it?`;
