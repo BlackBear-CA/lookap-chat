@@ -231,6 +231,12 @@ function formatResults(results, column) {
         return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
     }
 
+    // Debugging: Ensure column is a valid string
+    if (typeof column !== "string") {
+        console.error("❌ Invalid column type:", column); // Log issue
+        return "Lookapp AI: There was an issue retrieving the requested information. Please try again.";
+    }
+
     const row = results[0]; // Pick the most relevant result
     const requestedValue = row[column] || "Unknown"; // Get value dynamically
 
@@ -239,7 +245,7 @@ function formatResults(results, column) {
         return `Lookapp AI: The current stock on hand is ${requestedValue}. Let me know if you need more details.`;
     }
 
-    // Ensure correct referencing for other common columns
+    // Ensure correct referencing for other known columns
     switch (column) {
         case "storage_bin":
             return `Lookapp AI: The item is stored in bin ${requestedValue}. Do you need help locating it?`;
