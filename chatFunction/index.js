@@ -126,38 +126,40 @@ Reply conversationally but include structured data inside `<response>` tags.
 Does this help?"
 `;
 
-    try {
-        const response = await openai.chat.completions.create({
-            model: "gpt-4",
-            messages: [{ role: "system", content: prompt }, { role: "user", content: userMessage }]
-        });
+try {
+    const response = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [{ role: "system", content: prompt }]
+    });
 
-        if (!response.choices || response.choices.length === 0) {
-            context.log("⚠️ OpenAI response is empty.");
-            return { dataset: null, columns: [], value: null };
-        }
-
-        const responseText = response.choices[0].message.content;
-        context.log(`📩 OpenAI Response: ${responseText}`);
-
-        // Extract structured response from <response> tags
-        const datasetMatch = responseText.match(/<response>(.*?)<\/response>/g);
-
-        if (!datasetMatch || datasetMatch.length < 3) {
-            context.log("⚠️ OpenAI response missing dataset, columns, or value.");
-            return { dataset: null, columns: [], value: null };
-        }
-
-        const dataset = datasetMatch[0].replace(/<\/?response>/g, "");
-        const columns = JSON.parse(datasetMatch[1].replace(/<\/?response>/g, ""));  // Ensure it's an array
-        const value = datasetMatch[2].replace(/<\/?response>/g, "");
-
-        return { dataset, columns, value };
-
-    } catch (error) {
-        context.log(`❌ OpenAI API Error: ${error.message}`);
-        return { dataset: null, columns: [], value: null };
+    if (!response.choices || response.choices.length === 0) {
+        context.log("⚠️ OpenAI response is empty.");
+        return { dataset: null, column: null, value: null };
     }
+
+    // Log raw response for debugging
+    const responseText = response.choices[0].message.content;
+    context.log(`📩 OpenAI Raw Response: ${responseText}`);
+
+    // Attempt to extract dataset, column, and value dynamically
+    const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
+    const columnMatch = responseText.match(/Column:\s*([\w]+)/i);
+    const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
+
+    const dataset = datasetMatch ? datasetMatch[1] : null;
+    const column = columnMatch ? columnMatch[1] : null;
+    const value = valueMatch ? valueMatch[1] : null;
+
+    if (!dataset || !column || !value) {
+        context.log("⚠️ OpenAI response missing dataset, column, or value:", responseText);
+        return { dataset: null, column: null, value: null };
+    }
+
+    return { dataset, column, value };
+
+} catch (error) {
+    context.log(`❌ OpenAI API Error: ${error.message}`);
+    return { dataset: null, column: null, value: null };
 }
 
 /**
