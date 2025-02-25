@@ -66,7 +66,9 @@ async function analyzeUserQuery(userMessage, context) {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
-    You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
+     You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
+    Users may provide vague queries like "Where do we buy this?" referring to an item they are viewing.
+    If the user includes an SKU ID reference in the query, ensure it is used for retrieval.
 
     ## **Available Datasets & Column Mappings:**
     - **barcodes.csv** (sku_id, barcode_uid)
@@ -234,13 +236,16 @@ function formatResults(results, column) {
         return "Lookapp AI: There was an issue retrieving the requested information. Please try again.";
     }
 
-    const row = results[0]; // Pick the first relevant result
-    const requestedValue = row[column] || "Unknown"; // Get value based on column
+    const row = results[0]; // Get the first relevant result
+    const requestedValue = row[column] || "Unknown"; // Get value dynamically
 
-    // Generate natural language response based on the requested column
+    // Handle stock queries
+    if (column === "soh") {
+        return `Lookapp AI: The current stock on hand is a quantity of ${requestedValue} . Let me know if you need more details.`;
+    }
+
+    // Ensure correct referencing for other known columns
     switch (column) {
-        case "soh":
-            return `Lookapp AI: The current stock on hand is a quantity of ${requestedValue}. Let me know if you need more details.`;
         case "storage_bin":
             return `Lookapp AI: The item is stored in bin ${requestedValue}. Do you need help locating it?`;
         case "unit_price":
