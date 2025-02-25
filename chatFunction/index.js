@@ -89,44 +89,28 @@ async function analyzeUserQuery(userMessage, context) {
     - **tableDirectory.csv** (tableID, tableName, previousName, tableDescription, scriptSource, lastChangeDate)
     - **warehouseData.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, consignmentSOH, inTransit, rop, maxStock, mrpType)
 
-**User Query:** "${userMessage}"
+## **User Query:** "${userMessage}"
 
-💡 **Search Handling Rules:**
-1️⃣ If the user searches for a **generic item keyword** (e.g., "pump", "motor", "filter"):
-   - **Dataset:** "materialBasicData.csv"
-   - **Search Columns:** "item_description", "manufacturer", "mfg_part_nos", "item_main_category", "item_sub_category"
-   - **Response:** Provide available SKUs and descriptions in a **conversational** manner.
+    **Your Task:**
+    - Identify the **dataset** that should be queried.
+    - Identify the **correct column(s)** where the data should be searched.
+    - Extract the **search value** (e.g., SKU ID, vendor name, manufacturer, part number).
 
-2️⃣ If the user searches for a **specific SKU or stock number** (e.g., "stock 10271", "sku 10014", "material number 10271"):
-   - **Dataset:** "warehouseData.csv"
-   - **Search Columns:** "sku_id", "stock_number", "material_number"
-   - **Response:** Provide stock availability in **a helpful and friendly tone**.
+    **Example Queries & Expected Responses:**
+    - **User Query:** "How many are in stock for SKU 10271?"
+      **Response:** "The current stock on hand for SKU 10271 is 5. Let me know if you need more details."
+      *(Dataset: warehouseData.csv, Column: soh, Value: 10271)*
 
-3️⃣ If the user asks **where an item is purchased from** (e.g., "Where do we buy SKU 10271?"):
-   - **Dataset:** "purchaseRecords.csv"
-   - **Search Columns:** "sku_id", "vendorName"
-   - **Response:** Provide the **vendor or supplier name** and make it sound **natural and friendly**.
+    - **User Query:** "Who supplies SKU 10271?"
+      **Response:** "SKU 10271 is typically purchased from KSB PUMPS INC."
+      *(Dataset: purchaseRecords.csv, Column: vendorName, Value: 10271)*
 
-4️⃣ If the user asks for **manufacturer or part number details**:
-   - **Dataset:** "materialBasicData.csv"
-   - **Search Columns:** "manufacturer", "mfg_part_nos"
-   - **Response:** Provide manufacturer details and respond in a **helpful, conversational way**.
+    - **User Query:** "What’s the price for SKU 19243?"
+      **Response:** "The unit price for SKU 19243 is 75 CAD."
+      *(Dataset: stockPricingData.csv, Column: unit_price, Value: 19243)*
 
-💬 **Example Queries & Expected Conversational Responses:**
-- **User:** "I need a SKU ID for a pump"
-  - **Response:** "Here are the available pumps in our inventory: 1. SKU **10271** - PUMP;SELF-PRIMING;COMPLETE;ASSY;PIONEER 2. SKU **10014** - PUMP;SUBMERSIBLE;140HP;FLYGT. Let me know if you need more details!"
-
-- **User:** "Where do we buy SKU 10271?"
-  - **Response:** "SKU **10271** is supplied by **KSB PUMPS INC**. Would you like to see past purchase orders?"
-
-- **User:** "Who is the manufacturer of SKU 10014?"
-  - **Response:** "SKU **10014** is manufactured by **FLYGT**. Let me know if you need more product details!"
-
-- **User:** "How many are in stock for material number 10271?"
-  - **Response:** "We currently have **1 unit** of SKU **10271** available in stock. Do you need more details on this item?"
-
-🤖 **Important:** Generate responses in a **conversational, helpful, and natural tone** while making sure to return the relevant information.
-`;
+    Ensure responses are in a **conversational tone**, but the dataset, column, and value should be clearly extractable.
+    `;
 
     try {
         const response = await openai.chat.completions.create({
@@ -136,23 +120,31 @@ async function analyzeUserQuery(userMessage, context) {
 
         if (!response.choices || response.choices.length === 0) {
             context.log("⚠️ OpenAI response is empty.");
-            return { dataset: null, columns: [], value: null };
+            return { dataset: null, column: null, value: null };
         }
 
         const responseText = response.choices[0].message.content;
         context.log(`📩 OpenAI Response: ${responseText}`);
 
-        const parsedResponse = JSON.parse(responseText);
+        // Attempt to extract dataset, column, and value dynamically
+        const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
+        const columnMatch = responseText.match(/Column:\s*([\w]+)/i);
+        const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
 
-        return {
-            dataset: parsedResponse.dataset || null,
-            columns: parsedResponse.columns || [],
-            value: parsedResponse.value || null,
-            chatResponse: parsedResponse.chatResponse || "I'm here to help! What do you need assistance with?"
-        };
+        const dataset = datasetMatch ? datasetMatch[1] : null;
+        const column = columnMatch ? columnMatch[1] : null;
+        const value = valueMatch ? valueMatch[1] : null;
+
+        if (!dataset || !column || !value) {
+            context.log("⚠️ OpenAI response missing dataset, column, or value:", responseText);
+            return { dataset: null, column: null, value: null };
+        }
+
+        return { dataset, column, value };
+
     } catch (error) {
         context.log(`❌ OpenAI API Error: ${error.message}`);
-        return { dataset: null, columns: [], value: null, chatResponse: "Oops! I ran into an issue processing your request. Could you try again?" };
+        return { dataset: null, column: null, value: null };
     }
 }
 
@@ -252,36 +244,52 @@ function formatResults(results, column) {
         return "I couldn't find any matching records. Would you like me to check something else?";
     }
 
-    // Handle multiple results (e.g., listing multiple SKUs or suppliers)
+    // Handle multiple results dynamically
     if (results.length > 1) {
-        let response = `Here are the matching results:\n`;
+        let response = "Here are some matching results:\n";
         results.forEach((row, index) => {
             const sku = row.sku_id || "Unknown SKU";
             const description = row.item_description || "No description available";
-            
-            if (column === "vendorName") {
-                response += `${index + 1}. SKU ${sku} is typically purchased from **${row.vendorName || "Unknown Vendor"}**.\n`;
-            } else {
-                response += `${index + 1}. SKU ${sku} - ${description}\n`;
+
+            switch (column) {
+                case "vendorName":
+                    response += `${index + 1}. SKU ${sku} is purchased from ${row.vendorName || "Unknown Vendor"}.\n`;
+                    break;
+                case "manufacturer":
+                    response += `${index + 1}. SKU ${sku} is manufactured by ${row.manufacturer || "Unknown Manufacturer"}.\n`;
+                    break;
+                case "soh":
+                    response += `${index + 1}. SKU ${sku} has ${row.soh || "0"} units in stock.\n`;
+                    break;
+                default:
+                    response += `${index + 1}. SKU ${sku} - ${description}\n`;
+                    break;
             }
         });
-        return response + "Let me know if you need more details on a specific item!";
+        return response + "Let me know if you need details on a specific item.";
     }
 
     // Handle single result
     const row = results[0];
     const requestedValue = row[column] || "Unknown";
 
-    if (column === "soh") {
-        return `Lookapp AI: The current stock on hand is **${requestedValue}**. Let me know if you need more details.`;
-    } else if (column === "vendorName") {
-        return `Lookapp AI: SKU ${row.sku_id} is typically purchased from **${requestedValue}**. Let me know if you need more details!`;
-    } else if (column === "order_qty") {
-        return `Lookapp AI: The last purchase order for this item was for **${requestedValue}** units. Would you like to see more order history?`;
+    // Context-aware responses
+    switch (column) {
+        case "soh":
+            return `The current stock on hand for SKU ${row.sku_id} is ${requestedValue}. Let me know if you need more details.`;
+        case "vendorName":
+            return `SKU ${row.sku_id} is typically purchased from ${requestedValue}. Let me know if you need supplier details.`;
+        case "order_qty":
+            return `The last purchase order for SKU ${row.sku_id} was for ${requestedValue} units. Would you like to see more order history?`;
+        case "manufacturer":
+            return `SKU ${row.sku_id} is manufactured by ${requestedValue}. Let me know if you need technical details or specifications.`;
+        case "storage_bin":
+            return `This item is stored in bin ${requestedValue}. Do you need help locating it?`;
+        case "unit_price":
+            return `The most recent price for SKU ${row.sku_id} was $${requestedValue} per unit. Let me know if you need pricing history.`;
+        default:
+            return `The requested information for ${column} is ${requestedValue}. Let me know if you need anything else.`;
     }
-
-    // Default response if column is unknown
-    return `Lookapp AI: The requested information for '${column}' is **${requestedValue}**. Let me know if you need anything else.`;
 }
 
 /**
