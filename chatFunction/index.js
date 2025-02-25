@@ -229,6 +229,11 @@ function formatResults(results, column) {
         return "I couldn't find any matching records. Would you like me to check something else?";
     }
 
+    if (typeof column !== "string") {
+        console.error("❌ Invalid column value:", column); // Debugging log
+        return "Lookapp AI: There was an issue retrieving the requested information. Please try again.";
+    }
+
     const row = results[0]; // Pick the first relevant result
     const requestedValue = row[column] || "Unknown"; // Get value based on column
 
@@ -245,7 +250,7 @@ function formatResults(results, column) {
         case "order_qty":
             return `Lookapp AI: The last purchase order for this item was for ${requestedValue} units. Would you like to see more order history?`;
         default:
-            return `Lookapp AI: The requested information for ${column} is ${requestedValue}. Let me know if you need anything else.`;
+            return `Lookapp AI: The requested information for '${column}' is ${requestedValue}. Let me know if you need anything else.`;
     }
 }
 
