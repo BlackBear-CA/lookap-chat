@@ -19,11 +19,7 @@ module.exports = async function (context, req) {
 
     try {
         // 🔎 Step 1: Identify dataset, column, and value using OpenAI
-        const queryResult = await analyzeUserQuery(userMessage, context);
-        const dataset = queryResult.dataset || null;
-        const column = queryResult.column || null;
-        const value = queryResult.value || null;
-
+        const { dataset, column, value } = await analyzeUserQuery(userMessage, context);
         context.log(`🔍 Query Analysis Results: Dataset = ${dataset}, Column = ${column}, Value = ${value}`);
 
         if (dataset && column && value) {
@@ -107,8 +103,7 @@ Your response should be conversational. If you retrieve data, format it in **nat
         }
 
         try {
-            const parsedResponse = JSON.parse(response.choices[0].message.content);
-            return parsedResponse;
+            return JSON.parse(response.choices[0].message.content);
         } catch (parseError) {
             context.log("⚠️ Failed to parse OpenAI response. Falling back to general conversation.");
             return { dataset: null, column: null, value: null };
@@ -180,4 +175,16 @@ function formatResults(results) {
     ];
 
     return responses[Math.floor(Math.random() * responses.length)];
+}
+
+/**
+ * 📥 Converts a readable stream into a string.
+ */
+async function streamToString(stream) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        stream.on("data", (chunk) => chunks.push(chunk));
+        stream.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        stream.on("error", reject);
+    });
 }
