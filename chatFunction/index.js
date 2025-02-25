@@ -224,29 +224,23 @@ async function searchDataset(context, filename, column, value) {
 /**
  * 📜 Converts the results into a conversational response.
  */
-function formatResults(results, column) {
+function formatResults(results) {
     if (!results.length) {
-        return "I couldn't find any matching records. Would you like me to check something else?";
+        return "Hmm... I couldn't find any matching records. Want me to check something else? 🤔";
     }
 
-    const row = results[0]; // Use the first relevant result
-    const requestedValue = row[column] || "Unknown";
+    const row = results[0]; // Pick the first relevant result
 
-    // Generate natural language response based on the requested column
-    switch (column) {
-        case "soh":
-            return `Lookapp AI: The current stock on hand is a quantity of ${requestedValue}. Let me know if you need more details.`;
-        case "storage_bin":
-            return `Lookapp AI: The item is stored in bin ${requestedValue}. Do you need help locating it?`;
-        case "unit_price":
-            return `Lookapp AI: The most recent price for this item is $${requestedValue} per unit. Let me know if you need more pricing details.`;
-        case "vendorID":
-            return `Lookapp AI: This item is typically purchased from Vendor ID ${requestedValue}. Would you like supplier details?`;
-        case "order_qty":
-            return `Lookapp AI: The last purchase order for this item was for ${requestedValue} units. Would you like to see more order history?`;
-        default:
-            return `Lookapp AI: The requested information for ${column} is ${requestedValue}. Let me know if you need anything else.`;
-    }
+    // Extract relevant details with fallbacks
+    const sku = row.sku_id || "Unknown SKU";
+    const stock = row.soh || "0";
+    const unit = row.uom || "units";
+    const description = row.item_description || "No description available";
+    const bin = row.storage_bin || "No bin assigned";
+    const store = row.store || "Unknown store";
+
+    // Generate a friendly conversational response
+    return `I found SKU **${sku}** (${description}) in **${store}**. We currently have **${stock} ${unit}** available, stored in **bin ${bin}**. Let me know if you need anything else! 😊`;
 }
 
 /**
