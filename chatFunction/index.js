@@ -66,85 +66,97 @@ async function analyzeUserQuery(userMessage, context) {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
-     You are an AI assistant that helps classify user queries to retrieve structured data from a set of CSV datasets.
-    Users may provide vague queries like "Where do we buy this?" referring to an item they are viewing.
-    If the user includes an SKU ID reference in the query, ensure it is used for retrieval.
-
-    ## **Available Datasets & Column Mappings:**
-    - **barcodes.csv** (sku_id, barcode_uid)
-    - **materialBasicData.csv** (clientID, store, sku_id, item_description, detailed_description, manufacturer, mfg_part_nos, item_main_category, item_sub_category, materialReference)
-    - **missingItemReport.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, reportedBy, reportingDate)
-    - **mrpData.csv** (clientID, store, sku_id, item_description, stock_type, stock_status, mrpGRP, mrpType, mrpLot, stockCriticality, rop, maxStock, stockOwner, procurementInd, vendorLeadTime, receivingTime, materialMemo)
-    - **optimizerDataIBM.csv** (clientID, store, sku_id, item_description, movingCode, mrpType, mrpLot, rop, maxStock, optimizerROP, optimizerMaxStock, stockCriticality, clientStockImpact, stocklikelihood, stockOwner, stockSegment, soh, mrpGRP, stockoutCost, currentStockValue, autoClientImpact, inTransit, consignmentSOH, monthsOfStock, monthsOfExcess, actualStockouts, surplusValue, surplusQtyCalculated)
-    - **purchaseMaster.csv** (clientID, store, vendorID, sku_id, item_description, quotePrice, quoteReference, uom, currency)
-    - **purchaseRecords.csv** (clientID, store, purchaseOrd, doc_type, doc_status, doc_short_text, purchasingGRP, doc_creation_date, vendorName, vendorID, sku_id, item_description, order_qty, order_unit, net_price, currency, net_order_val, delivery_date, requisition_tracking)
-    - **reservationData.csv** (clientID, store, sku_id, item_description, requirement_date, reservationRef, maintenanceOrderRef, requirement_qty, goods_recipient)
-    - **stockCategoryReference.csv** (sub_category, main_category)
-    - **stockLogisticsData.csv** (clientID, store, sku_id, item_description, shipment_date, shipped_qty, shipping_reference, shipment_location, carrier, eta)
-    - **stockMaintenanceData.csv** (clientID, store, sku_id, item_description, detailed_description, manufacturer, mfg_part_nos, fitment, bom_structure, bom_qty, bom_grp, bom_id, bom_ref, plannerGroup)
-    - **stockOwnerReference.csv** (stockOwnerID, stockOwnerDescription)
-    - **stockPricingData.csv** (clientID, store, sku_id, item_description, uom, unit_price, currency, price_unit, stock_group, stock_class, stock_type, lastChangeDate)
-    - **stockTransactions.csv** (clientID, store, sku_id, item_description, transaction_ref, transaction_type, doc_reference, doc_type, doc_creation_date)
-    - **subscriberData.csv** (clientID, store, sku_id, item_description, subscriberName, subscriberEmail)
-    - **tableDirectory.csv** (tableID, tableName, previousName, tableDescription, scriptSource, lastChangeDate)
-    - **warehouseData.csv** (clientID, store, sku_id, item_description, storage_bin, soh, uom, consignmentSOH, inTransit, rop, maxStock, mrpType)
-
-## **User Query:** "${userMessage}"
-
-    **Your Task:**
+    You are an AI assistant that helps users retrieve structured data from an inventory system. Users may search using SKU IDs, stock numbers, manufacturer names, part numbers, or keywords like "pump" or "filter."
+    
+    ### **Your Task:**
     - Identify the **dataset** that should be queried.
     - Identify the **correct column(s)** where the data should be searched.
-    - Extract the **search value** (e.g., SKU ID, vendor name, manufacturer, part number).
+    - Extract the **search value** that will be used for retrieval.
+    
+    ### **Key Definitions:**
+    - **SKU ID synonyms:** "sku", "stock", "stock number", "stock nos.", "stock #", "stock code", "material nos.", "material number", "material", "material #", "stock keeping unit"
+      - These should be mapped to **sku_id** when searching in datasets.
+    
+    ### **Dataset Definitions & Purposes:**
+    - **barcodes.csv** → Contains the generic barcode assigned to each SKU.
+    - **consolidated_columns.csv** → Lists all column headers and which CSV files they exist in.
+    - **materialBasicData.csv** → Stores basic SKU information (SKU ID, item description, manufacturer, category, sub-category, references).
+    - **missingItemReport.csv** → Logs missing items reported by employees.
+    - **mrpData.csv** → Stores Material Requirements Planning (MRP) settings and configurations for SKU IDs.
+    - **optimizerDataIBM.csv** → Contains SKU usage information, business impact, criticality, and stock analytics.
+    - **purchaseMaster.csv** → Stores all historical purchasing records, including pricing.
+    - **purchaseRecords.csv** → Stores **active purchase orders**, including vendor details.
+    - **recommendedOrders.csv** → Lists **planned purchase orders** awaiting approval.
+    - **reservationData.csv** → Tracks **internal reservations** of SKUs.
+    - **stockCategoryReference.csv** → Maps SKU categories and subcategories.
+    - **stockLogisticsData.csv** → Stores **shipment references and logistics details**.
+    - **stockMaintenanceData.csv** → Shows where the SKU is **used or assigned**.
+    - **stockOwnerReference.csv** → Lists **who uses the material**.
+    - **stockPricingData.csv** → Stores the **moving average price** for SKUs.
+    - **stockTransactions.csv** → Contains **detailed material movements**, including purchases, transfers, and goods issues.
+    - **subscriberData.csv** → Logs **users who subscribe to alerts** for SKU activity.
+    - **tableDirectory.csv** → Maps CSV files to their table IDs and descriptions.
+    - **warehouseData.csv** → Stores SKU **stock levels, bin locations, and unit of measure**.
+    
+### **Example Queries & Expected Outputs:**
+- **User:** "I need a SKU ID for a pump"
+  - **Dataset:** "materialBasicData.csv"
+  - **Columns:** ["item_description"]
+  - **Value:** "pump"
 
-    **Example Queries & Expected Responses:**
-    - **User Query:** "How many are in stock for SKU 10271?"
-      **Response:** "The current stock on hand for SKU 10271 is 5. Let me know if you need more details."
-      *(Dataset: warehouseData.csv, Column: soh, Value: 10271)*
+- **User:** "Where do we buy stock 10271?"
+  - **Dataset:** "purchaseRecords.csv"
+  - **Columns:** ["vendorName", "vendorID"]
+  - **Value:** "10271"
 
-    - **User Query:** "Who supplies SKU 10271?"
-      **Response:** "SKU 10271 is typically purchased from KSB PUMPS INC."
-      *(Dataset: purchaseRecords.csv, Column: vendorName, Value: 10271)*
+- **User:** "How many are in stock for material number 10271?"
+  - **Dataset:** "warehouseData.csv"
+  - **Columns:** ["soh"]
+  - **Value:** "10271"
 
-    - **User Query:** "What’s the price for SKU 19243?"
-      **Response:** "The unit price for SKU 19243 is 75 CAD."
-      *(Dataset: stockPricingData.csv, Column: unit_price, Value: 19243)*
+---
+**Response Format:**  
+Reply conversationally but include structured data inside `<response>` tags.
 
-    Ensure responses are in a **conversational tone**, but the dataset, column, and value should be clearly extractable.
-    `;
+💡 **Example Output:**
+"Here’s what I found:  
+- Dataset: <response>materialBasicData.csv</response>  
+- Columns: <response>["item_description"]</response>  
+- Value: <response>pump</response>  
+Does this help?"
+`;
 
     try {
         const response = await openai.chat.completions.create({
             model: "gpt-4",
-            messages: [{ role: "system", content: prompt }]
+            messages: [{ role: "system", content: prompt }, { role: "user", content: userMessage }]
         });
 
         if (!response.choices || response.choices.length === 0) {
             context.log("⚠️ OpenAI response is empty.");
-            return { dataset: null, column: null, value: null };
+            return { dataset: null, columns: [], value: null };
         }
 
         const responseText = response.choices[0].message.content;
         context.log(`📩 OpenAI Response: ${responseText}`);
 
-        // Attempt to extract dataset, column, and value dynamically
-        const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
-        const columnMatch = responseText.match(/Column:\s*([\w]+)/i);
-        const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
+        // Extract structured response from <response> tags
+        const datasetMatch = responseText.match(/<response>(.*?)<\/response>/g);
 
-        const dataset = datasetMatch ? datasetMatch[1] : null;
-        const column = columnMatch ? columnMatch[1] : null;
-        const value = valueMatch ? valueMatch[1] : null;
-
-        if (!dataset || !column || !value) {
-            context.log("⚠️ OpenAI response missing dataset, column, or value:", responseText);
-            return { dataset: null, column: null, value: null };
+        if (!datasetMatch || datasetMatch.length < 3) {
+            context.log("⚠️ OpenAI response missing dataset, columns, or value.");
+            return { dataset: null, columns: [], value: null };
         }
 
-        return { dataset, column, value };
+        const dataset = datasetMatch[0].replace(/<\/?response>/g, "");
+        const columns = JSON.parse(datasetMatch[1].replace(/<\/?response>/g, ""));  // Ensure it's an array
+        const value = datasetMatch[2].replace(/<\/?response>/g, "");
+
+        return { dataset, columns, value };
 
     } catch (error) {
         context.log(`❌ OpenAI API Error: ${error.message}`);
-        return { dataset: null, column: null, value: null };
+        return { dataset: null, columns: [], value: null };
     }
 }
 
