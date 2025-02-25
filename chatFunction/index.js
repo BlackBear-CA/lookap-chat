@@ -91,23 +91,41 @@ async function analyzeUserQuery(userMessage, context) {
 
 **User Query:** "${userMessage}"
 
-**Dataset Matching Rules:**
-- If the user asks **"how many in stock?"**, select **"warehouseData.csv"** with column **"soh"**.
-- If the user asks **"where do we buy?"** or **"which supplier?"**, select **"purchaseRecords.csv"** with column **"vendorName"**.
-- If the user asks **"who supplies this?"**, select **"purchaseRecords.csv"** with column **"vendorName"**.
+💡 **Search Handling Rules:**
+1️⃣ If the user searches for a **generic item keyword** (e.g., "pump", "motor", "filter"):
+   - **Dataset:** "materialBasicData.csv"
+   - **Search Columns:** "item_description", "manufacturer", "mfg_part_nos", "item_main_category", "item_sub_category"
+   - **Response:** Provide available SKUs and descriptions in a **conversational** manner.
 
-**Example Queries & Expected Outputs:**
-- **User Query:** "How many are in stock for SKU 10271?"
-  **Output:** {"dataset": "warehouseData.csv", "column": "soh", "value": "10271"}
-  
-- **User Query:** "Where do we buy SKU 10271?"
-  **Output:** {"dataset": "purchaseRecords.csv", "column": "vendorName", "value": "10271"}
+2️⃣ If the user searches for a **specific SKU or stock number** (e.g., "stock 10271", "sku 10014", "material number 10271"):
+   - **Dataset:** "warehouseData.csv"
+   - **Search Columns:** "sku_id", "stock_number", "material_number"
+   - **Response:** Provide stock availability in **a helpful and friendly tone**.
 
-- **User Query:** "Who supplies SKU 10271?"
-  **Output:** {"dataset": "purchaseRecords.csv", "column": "vendorName", "value": "10271"}
+3️⃣ If the user asks **where an item is purchased from** (e.g., "Where do we buy SKU 10271?"):
+   - **Dataset:** "purchaseRecords.csv"
+   - **Search Columns:** "sku_id", "vendorName"
+   - **Response:** Provide the **vendor or supplier name** and make it sound **natural and friendly**.
 
-**Response Format (STRICT JSON ONLY):**
-{"dataset": "purchaseRecords.csv", "column": "vendorName", "value": "10271"}
+4️⃣ If the user asks for **manufacturer or part number details**:
+   - **Dataset:** "materialBasicData.csv"
+   - **Search Columns:** "manufacturer", "mfg_part_nos"
+   - **Response:** Provide manufacturer details and respond in a **helpful, conversational way**.
+
+💬 **Example Queries & Expected Conversational Responses:**
+- **User:** "I need a SKU ID for a pump"
+  - **Response:** "Here are the available pumps in our inventory: 1. SKU **10271** - PUMP;SELF-PRIMING;COMPLETE;ASSY;PIONEER 2. SKU **10014** - PUMP;SUBMERSIBLE;140HP;FLYGT. Let me know if you need more details!"
+
+- **User:** "Where do we buy SKU 10271?"
+  - **Response:** "SKU **10271** is supplied by **KSB PUMPS INC**. Would you like to see past purchase orders?"
+
+- **User:** "Who is the manufacturer of SKU 10014?"
+  - **Response:** "SKU **10014** is manufactured by **FLYGT**. Let me know if you need more product details!"
+
+- **User:** "How many are in stock for material number 10271?"
+  - **Response:** "We currently have **1 unit** of SKU **10271** available in stock. Do you need more details on this item?"
+
+🤖 **Important:** Generate responses in a **conversational, helpful, and natural tone** while making sure to return the relevant information.
 `;
 
     try {
@@ -118,7 +136,7 @@ async function analyzeUserQuery(userMessage, context) {
 
         if (!response.choices || response.choices.length === 0) {
             context.log("⚠️ OpenAI response is empty.");
-            return { dataset: null, column: null, value: null };
+            return { dataset: null, columns: [], value: null };
         }
 
         const responseText = response.choices[0].message.content;
@@ -126,20 +144,18 @@ async function analyzeUserQuery(userMessage, context) {
 
         const parsedResponse = JSON.parse(responseText);
 
-        if (!parsedResponse.dataset || !parsedResponse.column || !parsedResponse.value) {
-            context.log("⚠️ OpenAI response missing dataset, column, or value:", parsedResponse);
-            return { dataset: null, column: null, value: null };
-        }
-
-        return parsedResponse;
+        return {
+            dataset: parsedResponse.dataset || null,
+            columns: parsedResponse.columns || [],
+            value: parsedResponse.value || null,
+            chatResponse: parsedResponse.chatResponse || "I'm here to help! What do you need assistance with?"
+        };
     } catch (error) {
         context.log(`❌ OpenAI API Error: ${error.message}`);
-        return { dataset: null, column: null, value: null };
+        return { dataset: null, columns: [], value: null, chatResponse: "Oops! I ran into an issue processing your request. Could you try again?" };
     }
 }
-/**
- * 📂 Queries the identified dataset for a matching record.
- */
+
 /**
  * 📂 Queries the identified dataset for a matching record.
  */
@@ -167,28 +183,33 @@ async function searchDataset(context, filename, column, value) {
 
         return new Promise((resolve, reject) => {
             let results = [];
-            let headersChecked = false;
             let allHeaders = [];
-
+        
             csv.parseString(downloadedData, { headers: true, trim: true })
                 .on("headers", (headers) => {
                     allHeaders = headers;
                     context.log(`✅ CSV Headers in ${filename}: ${headers.join(", ")}`);
-
-                    if (!headers.includes(column)) {
-                        context.log(`❌ Column '${column}' not found in ${filename}. Available columns: ${headers.join(", ")}`);
-                        reject(new Error(`Column '${column}' not found in ${filename}.`));
+        
+                    // Ensure at least one of the target columns exists
+                    const validColumns = columns.filter(col => headers.includes(col));
+        
+                    if (validColumns.length === 0) {
+                        context.log(`❌ None of the required columns were found in ${filename}. Available columns: ${headers.join(", ")}`);
+                        reject(new Error(`Required columns missing in ${filename}.`));
                         return;
                     }
-                    headersChecked = true;
                 })
                 .on("data", (row) => {
-                    if (!headersChecked) {
-                        context.log(`❌ CSV headers not properly read for ${filename}.`);
-                        reject(new Error(`CSV headers not properly read for ${filename}.`));
-                        return;
+                    for (const column of columns) {
+                        if (row[column] && row[column].toString().toLowerCase().includes(value.toLowerCase())) {
+                            results.push(row);
+                            break; // Stop checking once a match is found
+                        }
                     }
-
+                })
+                .on("end", () => resolve(results))
+                .on("error", reject);
+               
                     // Ensure the column exists in the row
                     if (!(column in row)) {
                         context.log(`⚠️ Skipping row due to missing column '${column}': ${JSON.stringify(row)}`);
@@ -216,8 +237,8 @@ async function searchDataset(context, filename, column, value) {
                     context.log(`❌ CSV Parsing Failed: ${err.message}`);
                     reject(new Error(`CSV Parsing Failed: ${err.message}`));
                 });
-        });
-    } catch (error) {
+        }
+     catch (error) {
         context.log(`❌ Error processing dataset ${filename}: ${error.message}`);
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
