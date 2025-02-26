@@ -33,9 +33,12 @@ class AIDataService {
       context.log("Initializing query analysis...");
       const response = await this.openai.chat.completions.create({
         model: "gpt-4",
-        messages: [{ role: "system", content: this.ANALYSIS_PROMPT }]
+        messages: [
+          { role: "system", content: this.ANALYSIS_PROMPT },
+          { role: "user", content: userMessage }
+        ]
       });
-
+      
       return this.parseOpenAIResponse(response, context);
     } catch (error) {
       context.log(`AI Analysis Error: ${error.stack}`);
@@ -44,31 +47,41 @@ class AIDataService {
   }
 
   parseOpenAIResponse(response, context) {
-    const responseText = response.choices[0]?.message?.content || '';
-    context.log(`Raw AI Response: ${responseText}`);
+    try {
+        const responseText = response.choices[0]?.message?.content || '';
+        context.log(`Raw AI Response: ${responseText}`);
 
-    const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
-    const columnsMatch = responseText.match(/Columns?:\s*\[?([\w,\s-]+)\]?/i);
-    const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
+        // Attempt to parse JSON response
+        const parsedResponse = JSON.parse(responseText);
 
-    const result = {
-      dataset: datasetMatch?.[1],
-      columns: columnsMatch?.[1]?.split(",").map(c => c.trim()).filter(Boolean),
-      value: valueMatch?.[1],
-      fallback: "I'm not sure about that query. Could you clarify?",
-    };
+        const result = {
+            dataset: parsedResponse.dataset || null,
+            columns: Array.isArray(parsedResponse.columns) 
+                ? parsedResponse.columns.map(c => c.trim()).filter(Boolean) 
+                : [],
+            value: parsedResponse.value || null,
+            fallback: "I'm not sure about that query. Could you clarify?",
+        };
 
-    return result.dataset && result.columns && result.value 
-      ? { ...result, isValid: true } 
-      : { ...result, isValid: false };
-  }
+        return result.dataset && result.columns.length > 0 && result.value 
+            ? { ...result, isValid: true } 
+            : { ...result, isValid: false };
+
+    } catch (error) {
+        context.log(`Error parsing OpenAI response: ${error.message}`);
+        return {
+            isValid: false,
+            fallback: "I'm having trouble processing your request. Please try again."
+        };
+    }
+}
 
   handleAnalysisError(error, context) {
     context.log(`Analysis Error: ${error.message}`);
     return {
-      isValid: false,
-      fallback: "I'm having trouble processing your request. Please try again."
-    };
+        isValid: false,
+        fallback: `I couldn't process "${userMessage}". Can you provide more details?`
+      };      
   }
 }
 
@@ -136,41 +149,34 @@ class BlobDataService {
 }
 
 class ResponseFormatter {
-  static format(results, columns, value, context) {
-    return results.length === 0
-      ? this.noResultsResponse(value)
-      : this.resultsResponse(results, columns, context);
-  }
-
-  static noResultsResponse(value) {
-    return `No records found for '${value}'. Would you like to try a different search?`;
-  }
-
-  static resultsResponse(results, columns, context) {
-    if (results.length > 1) {
-      return this.multiResultResponse(results, columns);
+    static format(results, columns, value, context) {
+      return results.length === 0
+        ? this.noResultsResponse(value)
+        : this.resultsResponse(results, columns, context);
     }
-    return this.singleResultResponse(results[0], columns[0]);
+  
+    static noResultsResponse(value) {
+      return `No records found for '${value}'. Would you like to try a different search?`;
+    }
+  
+    static resultsResponse(results, columns, context) {
+      if (results.length > 1) {
+        return this.multiResultResponse(results, columns);
+      }
+      return this.singleResultResponse(results[0], columns.length > 0 ? columns[0] : Object.keys(results[0])[0]);
+    }
+  
+    static multiResultResponse(results, columns) {
+      const primaryColumn = columns.length > 0 ? columns[0] : Object.keys(results[0])[0] || "Unknown";
+      return results.map((row, index) => 
+        `${index + 1}. SKU ${row.sku_id || "N/A"} - ${row[primaryColumn] || "Unknown"}`
+      ).join("\n") + "\nPlease specify which item you need details for.";
+    }
+  
+    static singleResultResponse(row, primaryColumn) {
+      return `${primaryColumn}: ${row[primaryColumn] || "N/A"}`;
+    }
   }
-
-  static multiResultResponse(results, columns) {
-    const primaryColumn = columns[0];
-    return results.map((row, index) => 
-      `${index + 1}. SKU ${row.sku_id || "N/A"} - ${row[primaryColumn] || "Unknown"}`
-    ).join("\n") + "\nPlease specify which item you need details for.";
-  }
-
-  static singleResultResponse(row, primaryColumn) {
-    const responses = {
-      soh: `Stock on hand: ${row[primaryColumn]}`,
-      vendorName: `Supplied by: ${row[primaryColumn]}`,
-      manufacturer: `Manufacturer: ${row[primaryColumn]}`,
-      default: `${primaryColumn}: ${row[primaryColumn]}`
-    };
-
-    return responses[primaryColumn] || responses.default;
-  }
-}
 
 // Azure Function Entry Point
 module.exports = async function (context, req) {
