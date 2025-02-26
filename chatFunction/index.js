@@ -32,7 +32,7 @@ class AIDataService {
     // Initialize OpenAI client with API key
     this.openai = new OpenAI({ apiKey: ENV.OPENAI_API_KEY });
 
-    const DATASET_MAP = {
+    this.DATASET_MAP = {
         inventory: {
           dataset: 'warehouseData.csv',
           queries: ['stock level', 'quantity', 'bin location', 'current stock', 'units available'],
@@ -82,13 +82,18 @@ class AIDataService {
 
     // Create system prompt for query analysis
     this.ANALYSIS_PROMPT = this.createAnalysisPrompt();
-  }
+
+    // DEFINE VALID_DATASETS
+    this.VALID_DATASETS = new Set(
+        Object.values(this.DATASET_MAP).map(d => d.dataset)
+      );
+    }
 
   // Description: Defines the structured prompt for query analysis
   // Guides AI to identify datasets, columns, and search values
   createAnalysisPrompt() {
     return `
-    You are an inventory data analysis AI. Use these strict mapping rules:
+    You are an inventory data analysis AI. Use these datasets:
   
     ### Dataset Selection Protocol
     1. Match query type to these datasets:
