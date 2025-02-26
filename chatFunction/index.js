@@ -39,27 +39,54 @@ class AIDataService {
   // Guides AI to identify datasets, columns, and search values
   createAnalysisPrompt() {
     return `
-    You are an AI data assistant responsible for analyzing user queries 
-    and identifying relevant datasets, columns, and search values.
-
-    ### Response Format:
-    Respond ONLY in valid JSON format. Use this exact structure:
+    You are an AI inventory data analyst. Your task is to analyze user queries
+    and identify the most relevant dataset, search columns, and value.
+  
+    ### Mandatory Requirements:
+    1. Response MUST be valid JSON
+    2. NEVER return null/empty values
+    3. Use this exact structure:
     {
       "dataset": "filename.csv",
       "columns": ["column1", "column2"],
       "value": "search_term",
       "confidence": 0.0-1.0
     }
-
-    ### Additional Rules:
-    - If the dataset or columns cannot be identified, return:
-      {
-        "dataset": null,
-        "columns": [],
-        "value": null,
-        "confidence": 0.0
-      }
-    - NEVER include explanations or additional text outside the JSON structure.
+  
+    ### Dataset Selection Rules:
+    - Default to 'warehouseData.csv' if uncertain
+    - Only use other datasets for specific cases:
+      - materialBasicData.csv → Product descriptions
+      - purchaseRecords.csv → Vendor/supplier info
+  
+    ### Column Selection Guidelines:
+    - Primary column: "item_description" for product searches
+    - Use "sku_id" for stock number queries
+    - Include "storage_bin" for location requests
+  
+    ### Confidence Handling:
+    - confidence < 0.5 → Trigger fallback
+    - confidence >= 0.8 → High certainty
+    - For ambiguous queries:
+      - Set confidence between 0.5-0.7
+      - Use default dataset/columns
+  
+    ### Examples:
+    1. User: "Find safety glasses"
+    Response: {
+      "dataset": "warehouseData.csv",
+      "columns": ["item_description"],
+      "value": "safety glasses",
+      "confidence": 0.92
+    }
+  
+    2. User: "Where are pumps stored?"
+    Response: {
+      "dataset": "warehouseData.csv",
+      "columns": ["item_description", "storage_bin"],
+      "value": "pump",
+      "confidence": 0.88
+    }
     `;
   }
 
@@ -67,21 +94,20 @@ class AIDataService {
 // 1. Sends query to OpenAI
 // 2. Processes response
 // 3. Handles errors gracefully with a timeout mechanism
-
 async analyzeQuery(userMessage, context) {
     try {
         context.log("Initializing query analysis...");
 
         // Set a timeout for OpenAI API request (15 seconds max)
-        const timeoutLimit = 15000; // 15 seconds
+        const timeoutLimit = 15000;
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error("OpenAI request timeout")), timeoutLimit)
         );
 
         const openAIRequest = this.openai.chat.completions.create({
             model: "gpt-4",
-            temperature: 0.2,  // Reduce randomness for structured responses
-            max_tokens: 200,    // Limit response size
+            temperature: 0.2,
+            max_tokens: 200,
             messages: [
                 { role: "system", content: this.ANALYSIS_PROMPT },
                 { role: "user", content: userMessage }
@@ -91,37 +117,44 @@ async analyzeQuery(userMessage, context) {
         // Race between OpenAI request and timeout
         const response = await Promise.race([openAIRequest, timeoutPromise]);
 
-        if (!response || !response.choices || response.choices.length === 0) {
+        if (!response?.choices?.[0]?.message?.content) {
             throw new Error("OpenAI returned an empty response");
         }
 
-        const responseText = response.choices[0]?.message?.content?.trim();
-        if (!responseText) {
-            throw new Error("OpenAI response is empty or malformed");
-        }
-
+        const responseText = response.choices[0].message.content.trim();
         context.log(`Raw AI Response: ${responseText}`);
 
-        // Ensure response is in JSON format
-        let parsedResponse;
-        try {
-            parsedResponse = JSON.parse(responseText);
-        } catch (jsonError) {
-            throw new Error(`Failed to parse OpenAI response as JSON: ${responseText}`);
-        }
-
-        // Validate parsed JSON structure
-        if (!parsedResponse.dataset || !parsedResponse.columns || !parsedResponse.value) {
-            throw new Error(`Incomplete data received from OpenAI: ${JSON.stringify(parsedResponse)}`);
-        }
-
-        return { ...parsedResponse, isValid: true };
+        // Parse and validate response
+        const parsedResponse = JSON.parse(responseText);
         
+        // Validate required fields
+        if (!parsedResponse.dataset || !parsedResponse.columns?.length || !parsedResponse.value) {
+            throw new Error(`Incomplete data received: ${JSON.stringify(parsedResponse)}`);
+        }
+
+        // Check confidence level
+        if (parsedResponse.confidence < 0.5) {
+            context.log(`Low confidence analysis: ${parsedResponse.confidence}`);
+            return {
+                isValid: false,
+                fallback: "I'm not certain about this query. Could you please clarify?",
+                ...parsedResponse
+            };
+        }
+
+        return { 
+            isValid: true,
+            dataset: parsedResponse.dataset,
+            columns: parsedResponse.columns,
+            value: parsedResponse.value,
+            confidence: parsedResponse.confidence
+        };
+
     } catch (error) {
         context.log(`AI Analysis Error: ${error.message}`);
         return {
             isValid: false,
-            fallback: "I'm having trouble processing your request. Please try again later."
+            fallback: "I'm having trouble processing your request. Please try again with more specific details."
         };
     }
 }
