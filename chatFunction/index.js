@@ -1,33 +1,64 @@
+/* ========== MODULE IMPORTS AND ENV CONFIG ========== */
+// Description: Core dependencies and environment configuration
 const { BlobServiceClient } = require("@azure/storage-blob");
 const OpenAI = require("openai");
 const csv = require("fast-csv");
 
-// Environment Configuration
+// Description: Environment variable configuration
+// - AZURE_STORAGE_CONNECTION_STRING: Connection string for Azure Blob Storage
+// - OPENAI_API_KEY: OpenAI API authentication key
+// - DATASETS_CONTAINER: Fixed container name for dataset files
 const ENV = {
   AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   DATASETS_CONTAINER: "datasets"
 };
 
-// Validate environment on load
+/* ========== ENVIRONMENT VALIDATION ========== */
+// Description: Immediate validation of required environment variables
+// Executes on module load to fail fast if config is missing
 (() => {
   if (!ENV.AZURE_STORAGE_CONNECTION_STRING || !ENV.OPENAI_API_KEY) {
     throw new Error("Missing required environment variables");
   }
 })();
 
+/* ========== AI DATA SERVICE CLASS ========== */
+// Description: Handles all AI-related operations including:
+// - Query analysis using OpenAI
+// - Response parsing and error handling
 class AIDataService {
   constructor() {
+    // Initialize OpenAI client with API key
     this.openai = new OpenAI({ apiKey: ENV.OPENAI_API_KEY });
+    // Create system prompt for query analysis
     this.ANALYSIS_PROMPT = this.createAnalysisPrompt();
   }
 
+  // Description: Defines the structured prompt for query analysis
+  // Guides AI to identify datasets, columns, and search values
   createAnalysisPrompt() {
     return `
-    [System prompt content identical to original...]
+    [Previous content...]
+    
+    ### Strict Response Requirements:
+    1. Respond ONLY in valid JSON format
+    2. Use this template:
+       {
+         "dataset": "filename.csv",
+         "columns": ["column1", "column2"],
+         "value": "search_term",
+         "confidence": 0-1
+       }
+    3. If unsure, return: 
+       {"fallback": "Your fallback message here"}
     `;
   }
 
+  // Description: Main query analysis workflow
+  // 1. Sends query to OpenAI
+  // 2. Processes response
+  // 3. Handles errors gracefully
   async analyzeQuery(userMessage, context) {
     try {
       context.log("Initializing query analysis...");
@@ -46,12 +77,20 @@ class AIDataService {
     }
   }
 
+  // Description: Parses raw AI response into structured data
+  // Extracts dataset, columns, and search value
+  // Handles JSON parsing and validation
   parseOpenAIResponse(response, context) {
     try {
-        const responseText = response.choices[0]?.message?.content || '';
-        context.log(`Raw AI Response: ${responseText}`);
+      const responseText = response.choices[0]?.message?.content || '';
+      context.log(`Sanitized AI Response: ${responseText.substring(0, 100)}...`);
+  
+      // New: Check for JSON structure before parsing
+      if (!responseText.startsWith('{') && !responseText.includes('dataset')) {
+        throw new Error('Non-JSON response format detected');
+      }
 
-        // Attempt to parse JSON response
+        // Attempt to parse structured JSON response
         const parsedResponse = JSON.parse(responseText);
 
         const result = {
@@ -76,6 +115,8 @@ class AIDataService {
     }
 }
 
+  // Description: Error handler for AI operations
+  // Logs errors and returns fallback message
   handleAnalysisError(error, context) {
     context.log(`Analysis Error: ${error.message}`);
     return {
@@ -85,13 +126,22 @@ class AIDataService {
   }
 }
 
+/* ========== BLOB DATA SERVICE CLASS ========== */
+// Description: Manages Azure Blob Storage operations including:
+// - Dataset file retrieval
+// - CSV processing and filtering
 class BlobDataService {
   constructor() {
+    // Initialize Azure Blob Service client
     this.serviceClient = BlobServiceClient.fromConnectionString(
       ENV.AZURE_STORAGE_CONNECTION_STRING
     );
   }
 
+  // Description: Main dataset query workflow
+  // 1. Verifies blob existence
+  // 2. Streams CSV data
+  // 3. Processes results
   async queryDataset(context, filename, columns, searchValue) {
     try {
       const containerClient = this.serviceClient.getContainerClient(ENV.DATASETS_CONTAINER);
@@ -109,11 +159,16 @@ class BlobDataService {
     }
   }
 
+  // Description: Retrieves readable stream from blob storage
   async getDataStream(blobClient) {
     const downloadResponse = await blobClient.download();
     return downloadResponse.readableStreamBody;
   }
 
+  // Description: CSV processing pipeline
+  // 1. Validates columns
+  // 2. Filters rows by search value
+  // 3. Returns matching results
   async processCSVData(stream, columns, value, context) {
     return new Promise((resolve, reject) => {
       const results = [];
@@ -127,6 +182,7 @@ class BlobDataService {
     });
   }
 
+  // Description: Validates requested columns against CSV headers
   validateColumns(headers, targetColumns, context) {
     const validColumns = targetColumns.filter(col => headers.includes(col));
     if (validColumns.length === 0) {
@@ -135,6 +191,8 @@ class BlobDataService {
     context.log(`Valid columns: ${validColumns.join(", ")}`);
   }
 
+  // Description: Processes individual CSV rows
+  // Applies case-insensitive search across specified columns
   processRow(row, columns, value, results, context) {
     const searchValue = value.toLowerCase();
     for (const col of columns) {
@@ -148,17 +206,23 @@ class BlobDataService {
   }
 }
 
+/* ========== RESPONSE FORMATTER CLASS ========== */
+// Description: Transforms raw data into user-friendly responses
+// Handles multiple result scenarios and empty states
 class ResponseFormatter {
+    // Description: Main formatting entry point
     static format(results, columns, value, context) {
       return results.length === 0
         ? this.noResultsResponse(value)
         : this.resultsResponse(results, columns, context);
     }
   
+    // Description: Handles empty result scenario
     static noResultsResponse(value) {
       return `No records found for '${value}'. Would you like to try a different search?`;
     }
   
+    // Description: Routes to appropriate response formatter
     static resultsResponse(results, columns, context) {
       if (results.length > 1) {
         return this.multiResultResponse(results, columns);
@@ -166,6 +230,7 @@ class ResponseFormatter {
       return this.singleResultResponse(results[0], columns.length > 0 ? columns[0] : Object.keys(results[0])[0]);
     }
   
+    // Description: Formats multiple results as numbered list
     static multiResultResponse(results, columns) {
       const primaryColumn = columns.length > 0 ? columns[0] : Object.keys(results[0])[0] || "Unknown";
       return results.map((row, index) => 
@@ -173,22 +238,61 @@ class ResponseFormatter {
       ).join("\n") + "\nPlease specify which item you need details for.";
     }
   
+    // Description: Formats single result with primary column focus
     static singleResultResponse(row, primaryColumn) {
       return `${primaryColumn}: ${row[primaryColumn] || "N/A"}`;
     }
   }
 
-// Azure Function Entry Point
+/* ========== AZURE FUNCTION ENTRY POINT ========== */
+// Description: Main function handler for Azure Functions
+// Orchestrates query processing workflow with timeout protection:
+// 1. Sets up 8-second timeout promise
+// 2. Runs main processing logic race against timeout
+// 3. Returns appropriate responses or errors
 module.exports = async function (context, req) {
-  const aiService = new AIDataService();
-  const blobService = new BlobDataService();
-  
-  try {
-    const userMessage = req.body?.userMessage?.trim();
-    if (!userMessage) return { status: 400, body: { error: "Missing userMessage" } };
+    const aiService = new AIDataService();
+    const blobService = new BlobDataService();
+    
+    // Timeout protection (8 seconds)
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Timeout after 8s")), 8000)
+    );
 
+    try {
+      // Race processing against timeout
+      const result = await Promise.race([
+        processRequest(context, req, aiService, blobService),
+        timeoutPromise
+      ]);
+      
+      return result;
+      
+    } catch (error) {
+      context.log(`Function Error: ${error.stack}`);
+      return {
+        status: 500,
+        body: { 
+          error: "Processing failed",
+          details: error.message,
+          guidance: "Please try a more specific inventory-related query"
+        }
+      };
+    }
+};
+
+// Main processing logic extracted for clarity
+async function processRequest(context, req, aiService, blobService) {
+    // Validate input
+    const userMessage = req.body?.userMessage?.trim();
+    if (!userMessage) {
+      return { status: 400, body: { error: "Missing userMessage" } };
+    }
+  
+    // Analyze query with AI
     const analysis = await aiService.analyzeQuery(userMessage, context);
     
+    // Handle valid dataset query
     if (analysis.isValid) {
       const results = await blobService.queryDataset(
         context, 
@@ -202,22 +306,16 @@ module.exports = async function (context, req) {
         body: { message: ResponseFormatter.format(results, analysis.columns, analysis.value, context) }
       };
     }
-
+  
+    // Fallback to AI-generated response
     const openaiResponse = await aiService.openai.chat.completions.create({
       model: "gpt-4",
-      messages: [{ role: "user", content: userMessage }]
+      messages: [{ role: "user", content: userMessage }],
+      max_tokens: 150
     });
-
+  
     return {
       status: 200,
       body: { message: openaiResponse.choices[0].message.content || analysis.fallback }
     };
-
-  } catch (error) {
-    context.log(`Function Error: ${error.stack}`);
-    return {
-      status: 500,
-      body: { error: `Processing error: ${error.message}` }
-    };
-  }
-};
+}
