@@ -273,91 +273,98 @@ async analyzeQuery(userMessage, context) {
 // - Dataset file retrieval
 // - CSV processing and filtering
 class BlobDataService {
-  constructor() {
-    // Initialize Azure Blob Service client
-    this.serviceClient = BlobServiceClient.fromConnectionString(
-      ENV.AZURE_STORAGE_CONNECTION_STRING
-    );
-    this.columnMappings = {
-        'soh uom': ['soh', 'uom'],
-        'rop maxStock mrpType': ['rop', 'maxStock', 'mrpType'],
-        'sku_id item_description': ['sku_id', 'item_description']
-      };
-  }
-
-  // Description: Main dataset query workflow
-  // 1. Verifies blob existence
-  // 2. Streams CSV data
-  // 3. Processes results
-  async queryDataset(context, filename, columns, searchValue) {
-    try {
-      const containerClient = this.serviceClient.getContainerClient(ENV.DATASETS_CONTAINER);
-      const blobClient = containerClient.getBlobClient(filename);
-
-      if (!await blobClient.exists()) {
-        throw new Error(`Dataset ${filename} not found`);
-      }
-
-      const dataStream = await this.getDataStream(blobClient);
-      return this.processCSVData(dataStream, columns, searchValue, context);
-    } catch (error) {
-      context.log(`Dataset Error: ${error.message}`);
-      throw error;
+    constructor() {
+      // Initialize Azure Blob Service client
+      this.serviceClient = BlobServiceClient.fromConnectionString(
+        ENV.AZURE_STORAGE_CONNECTION_STRING
+      );
+      this.columnMappings = {
+          'soh uom': ['soh', 'uom'],
+          'rop maxStock mrpType': ['rop', 'maxStock', 'mrpType'],
+          'sku_id item_description': ['sku_id', 'item_description']
+        };
     }
-  }
-
-  // Description: Retrieves readable stream from blob storage
-  async getDataStream(blobClient) {
-    const downloadResponse = await blobClient.download();
-    return downloadResponse.readableStreamBody;
-  }
-
-  // Description: CSV processing pipeline
-  // 1. Validates columns
-  // 2. Filters rows by search value
-  // 3. Returns matching results
-  async processCSVData(stream, columns, value, context) {
-    return new Promise((resolve, reject) => {
-      const results = [];
-      let normalizedHeaders = [];
-      const parser = csv.parseStream(stream, {
-        headers: headers => this.normalizeHeaders(headers),
-        trim: true
-      });
-
-      parser
-      .on("headers", headers => {
-        normalizedHeaders = headers;
-        this.validateColumns(headers, columns, context);
-      })
-      .on("data", row => this.processNormalizedRow(row, normalizedHeaders, columns, value, results, context))
-      .on("end", () => resolve(results))
-      .on("error", error => reject(error));
-  });
-}
-
-  // Description: Validates requested columns against CSV headers
-  validateColumns(headers, targetColumns, context) {
-    const validColumns = targetColumns.filter(col => headers.includes(col));
-    if (validColumns.length === 0) {
-      throw new Error(`No valid columns found in: ${headers.join(", ")}`);
-    }
-    context.log(`Valid columns: ${validColumns.join(", ")}`);
-  }
-
-  // Description: Processes individual CSV rows
-  // Applies case-insensitive search across specified columns
-  processRow(row, columns, value, results, context) {
-    const searchValue = value.toLowerCase();
-    for (const col of columns) {
-      const cellValue = (row[col] || "").toString().toLowerCase();
-      if (cellValue.includes(searchValue)) {
-        results.push(row);
-        context.log(`Match found in column ${col}: ${cellValue}`);
-        break;
+  
+    // Description: Main dataset query workflow
+    // 1. Verifies blob existence
+    // 2. Streams CSV data
+    // 3. Processes results
+    async queryDataset(context, filename, columns, searchValue) {
+      try {
+        const containerClient = this.serviceClient.getContainerClient(ENV.DATASETS_CONTAINER);
+        const blobClient = containerClient.getBlobClient(filename);
+  
+        if (!await blobClient.exists()) {
+          throw new Error(`Dataset ${filename} not found`);
+        }
+  
+        const dataStream = await this.getDataStream(blobClient);
+        return this.processCSVData(dataStream, columns, searchValue, context);
+      } catch (error) {
+        context.log(`Dataset Error: ${error.message}`);
+        throw error;
       }
     }
-  }
+  
+    // Description: Retrieves readable stream from blob storage
+    async getDataStream(blobClient) {
+      const downloadResponse = await blobClient.download();
+      return downloadResponse.readableStreamBody;
+    }
+  
+    // ✅ Fix: Correctly place `normalizeHeaders()` inside the class
+    normalizeHeaders(headers) {
+      return headers.map(header => header.trim().toLowerCase());
+    }
+  
+    // Description: CSV processing pipeline
+    // 1. Validates columns
+    // 2. Filters rows by search value
+    // 3. Returns matching results
+    async processCSVData(stream, columns, value, context) {
+      return new Promise((resolve, reject) => {
+          const results = [];
+          let normalizedHeaders = [];
+          const parser = csv.parseStream(stream, {
+              headers: headers => this.normalizeHeaders(headers), // ✅ Calls the method correctly
+              trim: true
+          });
+
+          parser
+              .on("headers", headers => {
+                  normalizedHeaders = headers;
+                  this.validateColumns(headers, columns, context);
+              })
+              .on("data", row => this.processRow(row, columns, value, results, context))
+              .on("end", () => resolve(results))
+              .on("error", error => reject(error));
+      }); // ✅ Ensure proper closure of processCSVData()
+    }
+  
+    // ✅ Fix: Move validateColumns OUTSIDE of processCSVData()
+    // Description: Validates requested columns against CSV headers
+    validateColumns(headers, targetColumns, context) {
+      const validColumns = targetColumns.filter(col => headers.includes(col));
+      if (validColumns.length === 0) {
+        throw new Error(`No valid columns found in: ${headers.join(", ")}`);
+      }
+      context.log(`Valid columns: ${validColumns.join(", ")}`);
+    }
+
+    // ✅ Fix: Move processRow OUTSIDE of processCSVData()
+    // Description: Processes individual CSV rows
+    // Applies case-insensitive search across specified columns
+    processRow(row, columns, value, results, context) {
+      const searchValue = value.toLowerCase();
+      for (const col of columns) {
+        const cellValue = (row[col] || "").toString().toLowerCase();
+        if (cellValue.includes(searchValue)) {
+          results.push(row);
+          context.log(`Match found in column ${col}: ${cellValue}`);
+          break;
+        }
+      }
+    }
 }
 
 /* ========== RESPONSE FORMATTER CLASS ========== */
