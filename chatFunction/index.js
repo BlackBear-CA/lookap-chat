@@ -458,22 +458,24 @@ module.exports = async function (context, req) {
 // Main processing logic extracted for clarity
 async function processRequest(context, req, aiService, blobService) {
     try {
-        const userMessage = req.body?.userMessage?.trim();
-        
-        if (!userMessage) {
-            context.log("❌ Error: Missing userMessage in request body.");
-            return { 
-                status: 400, 
+        context.log("Incoming request body:", JSON.stringify(req.body));
+
+        // Ensure request body exists and userMessage is present
+        if (!req.body || !req.body.userMessage || typeof req.body.userMessage !== "string") {
+            context.log("❌ Error: Missing or invalid 'userMessage' in request body.");
+            return {
+                status: 400,
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ error: "Missing userMessage" }) 
+                body: JSON.stringify({ error: "Missing or invalid 'userMessage' in request body." })
             };
         }
 
-        context.log(`✅ Received userMessage: "${userMessage}"`);
+        const userMessage = req.body.userMessage.trim();
+        context.log(`Received userMessage: "${userMessage}"`);
 
         // Perform AI query analysis
         const analysis = await aiService.analyzeQuery(userMessage, context);
-        context.log("🔍 AI Analysis Result:", JSON.stringify(analysis, null, 2));
+        context.log("AI Analysis Result:", JSON.stringify(analysis, null, 2));
 
         if (analysis.isValid) {
             try {
@@ -485,21 +487,17 @@ async function processRequest(context, req, aiService, blobService) {
                     analysis.value
                 );
 
-                context.log("📊 Dataset Query Results:", JSON.stringify(results, null, 2));
-
-                const formattedMessage = ResponseFormatter.format(results, analysis.columns, analysis.value, context);
-                context.log("📝 Formatted Response:", formattedMessage);
+                context.log("Dataset Query Results:", JSON.stringify(results, null, 2));
 
                 return {
                     status: 200,
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        message: formattedMessage || "No response generated."
+                        message: ResponseFormatter.format(results, analysis.columns, analysis.value, context)
                     })
                 };
             } catch (datasetError) {
-                context.log("❌ Dataset Query Error:", datasetError.message);
-
+                context.log("Dataset Query Error:", datasetError.message);
                 return {
                     status: 500,
                     headers: { "Content-Type": "application/json" },
@@ -512,18 +510,16 @@ async function processRequest(context, req, aiService, blobService) {
         } else {
             try {
                 // If dataset lookup fails, fallback to OpenAI response
-                context.log("🔄 Falling back to OpenAI...");
-
                 const openaiResponse = await aiService.openai.chat.completions.create({
                     model: "gpt-4",
                     messages: [{ role: "user", content: userMessage }],
                     max_tokens: 150
                 });
 
-                context.log("🤖 OpenAI Raw Response:", JSON.stringify(openaiResponse, null, 2));
+                context.log("OpenAI Raw Response:", JSON.stringify(openaiResponse, null, 2));
 
-                const message = openaiResponse.choices?.[0]?.message?.content || analysis.fallback || "No response from AI.";
-                context.log("📝 Processed OpenAI Message:", message);
+                const message = openaiResponse.choices?.[0]?.message?.content || analysis.fallback;
+                context.log("Processed OpenAI Message:", message);
 
                 return {
                     status: 200,
@@ -531,8 +527,7 @@ async function processRequest(context, req, aiService, blobService) {
                     body: JSON.stringify({ message })
                 };
             } catch (openaiError) {
-                context.log("❌ OpenAI Request Error:", openaiError.message);
-
+                context.log("OpenAI Request Error:", openaiError.message);
                 return {
                     status: 500,
                     headers: { "Content-Type": "application/json" },
@@ -544,8 +539,7 @@ async function processRequest(context, req, aiService, blobService) {
             }
         }
     } catch (error) {
-        context.log("🔥 Unexpected Error in processRequest:", error.stack);
-
+        context.log("Unexpected Error in processRequest:", error.stack);
         return {
             status: 500,
             headers: { "Content-Type": "application/json" },
@@ -556,3 +550,4 @@ async function processRequest(context, req, aiService, blobService) {
         };
     }
 }
+
