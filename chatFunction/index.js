@@ -31,6 +31,55 @@ class AIDataService {
   constructor() {
     // Initialize OpenAI client with API key
     this.openai = new OpenAI({ apiKey: ENV.OPENAI_API_KEY });
+
+    const DATASET_MAP = {
+        inventory: {
+          dataset: 'warehouseData.csv',
+          queries: ['stock level', 'quantity', 'bin location', 'current stock', 'units available'],
+          columns: ['soh', 'storage_bin', 'uom']
+        },
+        productInfo: {
+          dataset: 'materialBasicData.csv',
+          queries: ['description', 'manufacturer', 'specifications', 'catalog', 'product details'],
+          columns: ['item_description', 'manufacturer', 'mfg_part_nos', 'category']
+        },
+        purchasing: {
+          dataset: 'purchaseRecords.csv',
+          queries: ['active orders', 'current purchases', 'vendor', 'supplier', 'ongoing procurement'],
+          columns: ['vendorName', 'vendorID', 'orderDate']
+        },
+        historicalData: {
+          dataset: 'purchaseMaster.csv',
+          queries: ['purchase history', 'price trends', 'historical cost', 'previous orders'],
+          columns: ['orderID', 'purchaseDate', 'historicalPrice']
+        },
+        logistics: {
+          dataset: 'stockLogisticsData.csv',
+          queries: ['shipment status', 'delivery tracking', 'logistics info', 'transport details'],
+          columns: ['shipment_id', 'carrier', 'estimated_delivery']
+        },
+        pricing: {
+          dataset: 'stockPricingData.csv',
+          queries: ['current price', 'moving average', 'blended cost', 'valuation'],
+          columns: ['moving_average_price', 'last_purchase_price']
+        },
+        maintenance: {
+          dataset: 'stockMaintenanceData.csv', 
+          queries: ['equipment usage', 'maintenance schedule', 'component belonging'],
+          columns: ['usage_location', 'maintenance_history']
+        },
+        transactions: {
+          dataset: 'stockTransactions.csv',
+          queries: ['material movement', 'transfer history', 'goods receipt', 'stock adjustment'],
+          columns: ['transaction_type', 'transfer_qty', 'from_location']
+        },
+        analytics: {
+          dataset: 'optimizerDataIBM.csv',
+          queries: ['business impact', 'criticality analysis', 'risk assessment', 'absorption likelihood'],
+          columns: ['business_impact_score', 'criticality_level']
+        }
+      };
+
     // Create system prompt for query analysis
     this.ANALYSIS_PROMPT = this.createAnalysisPrompt();
   }
@@ -39,54 +88,43 @@ class AIDataService {
   // Guides AI to identify datasets, columns, and search values
   createAnalysisPrompt() {
     return `
-    You are an AI inventory data analyst. Your task is to analyze user queries
-    and identify the most relevant dataset, search columns, and value.
+    You are an inventory data analysis AI. Use these strict mapping rules:
   
-    ### Mandatory Requirements:
-    1. Response MUST be valid JSON
-    2. NEVER return null/empty values
-    3. Use this exact structure:
-    {
-      "dataset": "filename.csv",
-      "columns": ["column1", "column2"],
-      "value": "search_term",
-      "confidence": 0.0-1.0
-    }
+    ### Dataset Selection Protocol
+    1. Match query type to these datasets:
+    ${Object.entries(DATASET_MAP).map(([key, val]) => 
+      `- ${val.dataset}: ${val.queries.join(', ')}`
+    ).join('\n')}
   
-    ### Dataset Selection Rules:
-    - Default to 'warehouseData.csv' if uncertain
-    - Only use other datasets for specific cases:
-      - materialBasicData.csv → Product descriptions
-      - purchaseRecords.csv → Vendor/supplier info
+    2. Default to warehouseData.csv for ambiguous queries
   
-    ### Column Selection Guidelines:
-    - Primary column: "item_description" for product searches
-    - Use "sku_id" for stock number queries
-    - Include "storage_bin" for location requests
+    ### Column Selection Guide
+    ${Object.entries(DATASET_MAP).map(([key, val]) => 
+      `- ${val.dataset}: ${val.columns.join(', ')}`
+    ).join('\n')}
   
-    ### Confidence Handling:
-    - confidence < 0.5 → Trigger fallback
-    - confidence >= 0.8 → High certainty
-    - For ambiguous queries:
-      - Set confidence between 0.5-0.7
-      - Use default dataset/columns
+    ### Examples
+    1. Query: "Track shipment for SKU 10271"
+       Response: {
+         "dataset": "stockLogisticsData.csv",
+         "columns": ["shipment_id", "carrier"],
+         "value": "10271",
+         "confidence": 0.95
+       }
   
-    ### Examples:
-    1. User: "Find safety glasses"
-    Response: {
-      "dataset": "warehouseData.csv",
-      "columns": ["item_description"],
-      "value": "safety glasses",
-      "confidence": 0.92
-    }
+    2. Query: "Show maintenance history for pumps"
+       Response: {
+         "dataset": "stockMaintenanceData.csv",
+         "columns": ["usage_location", "maintenance_history"],
+         "value": "pump",
+         "confidence": 0.88
+       }
   
-    2. User: "Where are pumps stored?"
-    Response: {
-      "dataset": "warehouseData.csv",
-      "columns": ["item_description", "storage_bin"],
-      "value": "pump",
-      "confidence": 0.88
-    }
+    ### Strict Requirements
+    - Never use null/empty values
+    - Minimum confidence = 0.4
+    - Invalid example (REJECTED):
+      {"dataset":null,"columns":[],"value":null,"confidence":0}
     `;
   }
 
@@ -98,12 +136,13 @@ async analyzeQuery(userMessage, context) {
     try {
         context.log("Initializing query analysis...");
 
-        // Set a timeout for OpenAI API request (15 seconds max)
+        // Set timeout for OpenAI request
         const timeoutLimit = 15000;
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error("OpenAI request timeout")), timeoutLimit)
         );
 
+        // Create OpenAI request
         const openAIRequest = this.openai.chat.completions.create({
             model: "gpt-4",
             temperature: 0.2,
@@ -117,6 +156,7 @@ async analyzeQuery(userMessage, context) {
         // Race between OpenAI request and timeout
         const response = await Promise.race([openAIRequest, timeoutPromise]);
 
+        // Validate response structure
         if (!response?.choices?.[0]?.message?.content) {
             throw new Error("OpenAI returned an empty response");
         }
@@ -132,12 +172,27 @@ async analyzeQuery(userMessage, context) {
             throw new Error(`Incomplete data received: ${JSON.stringify(parsedResponse)}`);
         }
 
-        // Check confidence level
-        if (parsedResponse.confidence < 0.5) {
+        // Dataset validation
+        if (!this.VALID_DATASETS.has(parsedResponse.dataset)) {
+            throw new Error(`Invalid dataset: ${parsedResponse.dataset}`);
+        }
+
+        // Column compatibility check
+        const validColumns = this.DATASET_MAP[
+            Object.keys(this.DATASET_MAP).find(k => 
+                this.DATASET_MAP[k].dataset === parsedResponse.dataset)
+        ].columns;
+        
+        if (!parsedResponse.columns.every(c => validColumns.includes(c))) {
+            throw new Error(`Invalid columns for ${parsedResponse.dataset}`);
+        }
+
+        // Confidence validation
+        if (parsedResponse.confidence < 0.4) {
             context.log(`Low confidence analysis: ${parsedResponse.confidence}`);
             return {
                 isValid: false,
-                fallback: "I'm not certain about this query. Could you please clarify?",
+                fallback: this.generateFallback(userMessage),
                 ...parsedResponse
             };
         }
@@ -154,11 +209,11 @@ async analyzeQuery(userMessage, context) {
         context.log(`AI Analysis Error: ${error.message}`);
         return {
             isValid: false,
-            fallback: "I'm having trouble processing your request. Please try again with more specific details."
+            fallback: this.generateFallback(userMessage)
         };
     }
 }
-
+    
   // Description: Parses raw AI response into structured data
   // Extracts dataset, columns, and search value
   // Handles JSON parsing and validation
