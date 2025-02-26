@@ -6,63 +6,59 @@ const AZURE_STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STR
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DATASETS_CONTAINER = "datasets";
 
-module.exports = async function (context, req) {
-  context.log("🔹 Chat function triggered.");
+module.exports = async function (context, req) {  // Ensure this is async
+    context.log("🔹 Chat function triggered.");
 
-  // 1) Validate userMessage
-  const userMessage = req.body && req.body.userMessage ? req.body.userMessage.trim() : null;
-  context.log("📩 Received user message:", userMessage);
+    const userMessage = req.body && req.body.userMessage ? req.body.userMessage.trim() : null;
+    context.log("📩 Received user message:", userMessage);
 
-  if (!userMessage) {
-    context.res = { status: 400, body: { message: "Error: No userMessage found in request body." } };
-    return;
-  }
+    if (!userMessage) {
+        context.res = { status: 400, body: { message: "Error: No userMessage found in request body." } };
+        return;
+    }
 
-  try {
-    // 2) Attempt structured query parse
-    const { dataset, columns, value, fallbackMessage } = await analyzeUserQuery(userMessage, context);
+    try {
+        // 2) Attempt structured query parse
+        const { dataset, columns, value, fallbackMessage } = await analyzeUserQuery(userMessage, context);
 
-    // If we got a dataset & columns & value, attempt to fetch the dataset
-    if (dataset && columns && value) {
-      context.log(`📂 Attempting to fetch data from: ${dataset}, Columns: [${columns.join(", ")}], Value: ${value}`);
-      try {
-        let searchResults = await searchDataset(context, dataset, columns, value);
+        if (dataset && columns && value) {
+            context.log(`📂 Attempting to fetch data from: ${dataset}, Columns: [${columns.join(", ")}], Value: ${value}`);
+            try {
+                let searchResults = await searchDataset(context, dataset, columns, value);
 
-        if (searchResults.length > 0) {
-          context.res = { status: 200, body: { message: formatResults(searchResults, columns, value, context) } };
-        } else {
-          context.res = { status: 200, body: { message: `No records found for '${value}' in ${dataset}.` } };
+                if (searchResults.length > 0) {
+                    context.res = { status: 200, body: { message: formatResults(searchResults, columns, value, context) } };
+                } else {
+                    context.res = { status: 200, body: { message: `No records found for '${value}' in ${dataset}.` } };
+                }
+                return;
+            } catch (searchError) {
+                context.log("❌ ERROR: searchDataset() failed:", searchError.message);
+                context.res = { status: 500, body: { message: "Error searching dataset: " + searchError.message } };
+                return;
+            }
         }
-        return;
-      } catch (searchError) {
-        context.log("❌ ERROR: searchDataset() failed:", searchError.message);
-        context.res = { status: 500, body: { message: "Error searching dataset: " + searchError.message } };
-        return;
-      }
+
+        if (fallbackMessage) {
+            context.log("🔎 Using fallback response from analyzeUserQuery:", fallbackMessage);
+            context.res = { status: 200, body: { message: fallbackMessage } };
+            return;
+        }
+
+        context.log("💡 Sending user message to OpenAI API (fallback)...");
+        const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+        const chatResponse = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "user", content: userMessage }],
+        });
+
+        const aiResponse = chatResponse.choices[0].message.content;
+        context.res = { status: 200, body: { message: aiResponse } };
+
+    } catch (error) {
+        context.log("❌ Outer try-catch error in chat function:", error.message);
+        context.res = { status: 500, body: { message: "Error processing request: " + error.message } };
     }
-
-    // 3) If no structured query (dataset/columns/value) or fallback
-    if (fallbackMessage) {
-      context.log("🔎 Using fallback response from analyzeUserQuery:", fallbackMessage);
-      context.res = { status: 200, body: { message: fallbackMessage } };
-      return;
-    }
-
-    // 4) Otherwise, fallback to direct OpenAI chat
-    context.log("💡 Sending user message to OpenAI API (fallback)...");
-    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-    const chatResponse = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [{ role: "user", content: userMessage }],
-    });
-
-    const aiResponse = chatResponse.choices[0].message.content;
-    context.res = { status: 200, body: { message: aiResponse } };
-
-  } catch (error) {
-    context.log("❌ Outer try-catch error in chat function:", error.message);
-    context.res = { status: 500, body: { message: "Error processing request: " + error.message } };
-  }
 };
 
 /**
