@@ -78,7 +78,6 @@ async function analyzeUserQuery(userMessage, context) {
     }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
     const prompt = `
     You are an AI assistant that helps users retrieve structured data from an inventory system. Users may search using SKU IDs, stock numbers, manufacturer names, part numbers, or keywords like "pump" or "filter."
     
@@ -141,34 +140,33 @@ Does this help?"
 `;
 
 try {
+    // ✅ Log API call before execution
     context.log("🚀 Sending request to OpenAI API...");
-
-    // Making API request
+    
+    // ✅ Ensure response is defined before accessing it
     const response = await openai.chat.completions.create({
         model: "gpt-4",
         messages: [{ role: "system", content: prompt }]
     });
 
-    // Debugging: Log full OpenAI response
-    context.log(`✅ OpenAI Response Received: ${JSON.stringify(response, null, 2)}`);
+    // ✅ Log full response from OpenAI
+    context.log(`✅ OpenAI Response: ${JSON.stringify(response, null, 2)}`);
 
-    // Check if response is valid
+    // ✅ Ensure `choices` exists before accessing it
     if (!response || !response.choices || response.choices.length === 0) {
         context.log("⚠️ OpenAI response is empty or malformed.");
         return { dataset: null, columns: null, value: null, fallbackMessage: "I’m not sure what you’re asking. Please try again." };
     }
 
-    // Extract message content
     const responseText = response.choices[0]?.message?.content || "";
-    context.log(`📩 Extracted Response Text: ${responseText}`);
+    context.log(`📩 Extracted Response: ${responseText}`);
 
-    // Error check: Ensure responseText contains expected data
     if (!responseText) {
         context.log("⚠️ OpenAI response does not contain expected content.");
         return { dataset: null, columns: null, value: null, fallbackMessage: "I couldn't extract any useful data from the response." };
     }
 
-    // Parse structured data from OpenAI response
+    // ✅ Parsing logic
     const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
     const columnsMatch = responseText.match(/Columns?:\s*\[?([\w,\s-]+)\]?/i);
     const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
@@ -177,13 +175,11 @@ try {
     let columnsRaw = columnsMatch ? columnsMatch[1] : null;
     let value = valueMatch ? valueMatch[1] : null;
 
-    // Convert columns to array if available
     let columns = null;
     if (columnsRaw) {
         columns = columnsRaw.split(",").map((c) => c.trim()).filter((x) => !!x);
     }
 
-    // Error handling: If key elements are missing
     if (!dataset || !columns || !value) {
         context.log("⚠️ Missing dataset, columns, or value in OpenAI response -> fallback.");
         return {
@@ -194,12 +190,10 @@ try {
         };
     }
 
-    // Successful response
     context.log(`✅ Parsed Response - Dataset: ${dataset}, Columns: ${JSON.stringify(columns)}, Value: ${value}`);
     return { dataset, columns, value, fallbackMessage: null };
 
 } catch (error) {
-    // Capture and log full error details
     context.log(`❌ OpenAI API Error: ${error.message}`);
     
     if (error.response) {
@@ -214,7 +208,7 @@ try {
         fallbackMessage: "I encountered an issue retrieving your data. Please try again later.",
     };
 }
-
+}
 
 /**
  * 📂 Queries the identified dataset for a matching record.
@@ -366,5 +360,4 @@ function isGeneralQuery(message) {
         "where do we buy this pump?"
     ];
     return generalQueries.some(q => message.toLowerCase().includes(q));
-}
 }
