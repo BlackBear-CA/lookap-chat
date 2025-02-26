@@ -39,19 +39,27 @@ class AIDataService {
   // Guides AI to identify datasets, columns, and search values
   createAnalysisPrompt() {
     return `
-    [Previous content...]
-    
-    ### Strict Response Requirements:
-    1. Respond ONLY in valid JSON format
-    2. Use this template:
-       {
-         "dataset": "filename.csv",
-         "columns": ["column1", "column2"],
-         "value": "search_term",
-         "confidence": 0-1
-       }
-    3. If unsure, return: 
-       {"fallback": "Your fallback message here"}
+    You are an AI data assistant responsible for analyzing user queries 
+    and identifying relevant datasets, columns, and search values.
+
+    ### Response Format:
+    Respond ONLY in valid JSON format. Use this exact structure:
+    {
+      "dataset": "filename.csv",
+      "columns": ["column1", "column2"],
+      "value": "search_term",
+      "confidence": 0.0-1.0
+    }
+
+    ### Additional Rules:
+    - If the dataset or columns cannot be identified, return:
+      {
+        "dataset": null,
+        "columns": [],
+        "value": null,
+        "confidence": 0.0
+      }
+    - NEVER include explanations or additional text outside the JSON structure.
     `;
   }
 
@@ -194,37 +202,27 @@ class BlobDataService {
   });
 }
 
-  // Description: Validates requested columns against NORMALIZED headers
-  validateColumns(normalizedHeaders, targetColumns, context) {
-    // Check if all target columns exist in normalized headers
-    const validColumns = targetColumns.filter(col => 
-      normalizedHeaders.includes(col)
-    );
-    
+  // Description: Validates requested columns against CSV headers
+  validateColumns(headers, targetColumns, context) {
+    const validColumns = targetColumns.filter(col => headers.includes(col));
     if (validColumns.length === 0) {
-      throw new Error(`No valid columns found. Available: ${normalizedHeaders.join(", ")}`);
+      throw new Error(`No valid columns found in: ${headers.join(", ")}`);
     }
-    
-    context.log(`Valid normalized columns: ${validColumns.join(", ")}`);
+    context.log(`Valid columns: ${validColumns.join(", ")}`);
   }
 
-  // Description: Processes rows using NORMALIZED columns
-  processRow(normalizedRow, validColumns, searchValue, results, context) {
-    const searchTerm = searchValue.toLowerCase();
-    
-    validColumns.forEach(col => {
-      const cellValue = normalizedRow[col]?.toString().toLowerCase() || '';
-      
-      if (cellValue.includes(searchTerm)) {
-        results.push({
-          ...normalizedRow,
-          matchedColumn: col,
-          matchedValue: cellValue
-        });
-        context.log(`Matched ${col}: ${cellValue}`);
-        return; // Stop after first match
+  // Description: Processes individual CSV rows
+  // Applies case-insensitive search across specified columns
+  processRow(row, columns, value, results, context) {
+    const searchValue = value.toLowerCase();
+    for (const col of columns) {
+      const cellValue = (row[col] || "").toString().toLowerCase();
+      if (cellValue.includes(searchValue)) {
+        results.push(row);
+        context.log(`Match found in column ${col}: ${cellValue}`);
+        break;
       }
-    });
+    }
   }
 }
 
