@@ -64,27 +64,6 @@ module.exports = async function (context, req) {
     }
 };
 
-// Helper Functions (Ensure these are async if they use await)
-async function analyzeUserQuery(userMessage, context) {
-    // Example: Parse userMessage to extract dataset, columns, value, and fallbackMessage
-    return {
-        dataset: "example-dataset",
-        columns: ["column1", "column2"],
-        value: "example-value",
-        fallbackMessage: "No structured query found.",
-    };
-}
-
-async function searchDataset(context, dataset, columns, value) {
-    // Example: Query Azure Blob Storage or another data source
-    return []; // Return an array of results
-}
-
-function formatResults(results, columns, value, context) {
-    // Example: Format results into a string or structured response
-    return `Found ${results.length} results for '${value}' in columns [${columns.join(", ")}].`;
-}
-
 /**
  * 🔍 Uses OpenAI to analyze user queries and determine dataset, column, and search value.
  */
@@ -333,7 +312,7 @@ function formatResults(results, columns, value, context) {
             return `The requested information for ${mainColumn} is ${requestedValue}. Let me know if you need anything else.`;
     }
 }
-  
+
 /**
  * 📥 Converts a readable stream into a string.
  */
