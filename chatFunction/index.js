@@ -68,9 +68,15 @@ module.exports = async function (context, req) {
 /**
  * 🔍 Uses OpenAI to analyze user queries and determine dataset, column, and search value.
  */
-async function analyzeUserQuery(userMessage, context) { 
+async function analyzeUserQuery(userMessage, context) {
     context.log("🔍 Analyzing user query using OpenAI...");
-    
+
+    // Ensure API key is set
+    if (!OPENAI_API_KEY) {
+        context.log("❌ ERROR: OpenAI API key is missing.");
+        return { dataset: null, columns: null, value: null, fallbackMessage: "Configuration error: API key is missing." };
+    }
+
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     const prompt = `
@@ -135,19 +141,34 @@ Does this help?"
 `;
 
 try {
+    context.log("🚀 Sending request to OpenAI API...");
+
+    // Making API request
     const response = await openai.chat.completions.create({
         model: "gpt-4",
         messages: [{ role: "system", content: prompt }]
     });
 
-    if (!response.choices || response.choices.length === 0) {
-        context.log("⚠️ OpenAI response is empty.");
+    // Debugging: Log full OpenAI response
+    context.log(`✅ OpenAI Response Received: ${JSON.stringify(response, null, 2)}`);
+
+    // Check if response is valid
+    if (!response || !response.choices || response.choices.length === 0) {
+        context.log("⚠️ OpenAI response is empty or malformed.");
         return { dataset: null, columns: null, value: null, fallbackMessage: "I’m not sure what you’re asking. Please try again." };
     }
 
-    const responseText = response.choices[0].message.content || "";
-    context.log(`📩 OpenAI Raw Response: ${responseText}`);
+    // Extract message content
+    const responseText = response.choices[0]?.message?.content || "";
+    context.log(`📩 Extracted Response Text: ${responseText}`);
 
+    // Error check: Ensure responseText contains expected data
+    if (!responseText) {
+        context.log("⚠️ OpenAI response does not contain expected content.");
+        return { dataset: null, columns: null, value: null, fallbackMessage: "I couldn't extract any useful data from the response." };
+    }
+
+    // Parse structured data from OpenAI response
     const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
     const columnsMatch = responseText.match(/Columns?:\s*\[?([\w,\s-]+)\]?/i);
     const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
@@ -156,39 +177,49 @@ try {
     let columnsRaw = columnsMatch ? columnsMatch[1] : null;
     let value = valueMatch ? valueMatch[1] : null;
 
+    // Convert columns to array if available
     let columns = null;
     if (columnsRaw) {
         columns = columnsRaw.split(",").map((c) => c.trim()).filter((x) => !!x);
     }
 
+    // Error handling: If key elements are missing
     if (!dataset || !columns || !value) {
-        context.log("⚠️ Missing dataset, columns, or value in OpenAI response -> fallback");
+        context.log("⚠️ Missing dataset, columns, or value in OpenAI response -> fallback.");
         return {
             dataset: null,
             columns: null,
             value: null,
-            fallbackMessage:
-                "I'm not sure about that exact query, but I can help look up stock levels, suppliers, or material info. What exactly do you need?",
+            fallbackMessage: "I'm not sure about that exact query, but I can help look up stock levels, suppliers, or material info. What exactly do you need?",
         };
     }
 
+    // Successful response
+    context.log(`✅ Parsed Response - Dataset: ${dataset}, Columns: ${JSON.stringify(columns)}, Value: ${value}`);
     return { dataset, columns, value, fallbackMessage: null };
 
 } catch (error) {
+    // Capture and log full error details
     context.log(`❌ OpenAI API Error: ${error.message}`);
+    
+    if (error.response) {
+        context.log(`🔴 OpenAI API Response Code: ${error.response.status}`);
+        context.log(`📩 OpenAI API Response Data: ${JSON.stringify(error.response.data, null, 2)}`);
+    }
+
     return {
         dataset: null,
         columns: null,
         value: null,
-        fallbackMessage: "I encountered an issue retrieving your data. Please try again.",
+        fallbackMessage: "I encountered an issue retrieving your data. Please try again later.",
     };
 }
-}
+
 
 /**
  * 📂 Queries the identified dataset for a matching record.
  */
-async function searchDataset(context, filename, column, value) {
+async function searchDataset(context, filename, columns, value) {
     try {
         const blobServiceClient = BlobServiceClient.fromConnectionString(AZURE_STORAGE_CONNECTION_STRING);
         const containerClient = blobServiceClient.getContainerClient(DATASETS_CONTAINER);
@@ -213,45 +244,32 @@ async function searchDataset(context, filename, column, value) {
         return new Promise((resolve, reject) => {
             let results = [];
             let allHeaders = [];
-        
+
             csv.parseString(downloadedData, { headers: true, trim: true })
                 .on("headers", (headers) => {
                     allHeaders = headers;
                     context.log(`✅ CSV Headers in ${filename}: ${headers.join(", ")}`);
-        
+
                     // Ensure at least one of the target columns exists
                     const validColumns = columns.filter(col => headers.includes(col));
-        
+
                     if (validColumns.length === 0) {
                         context.log(`❌ None of the required columns were found in ${filename}. Available columns: ${headers.join(", ")}`);
                         reject(new Error(`Required columns missing in ${filename}.`));
-                        return;
                     }
                 })
                 .on("data", (row) => {
                     for (const column of columns) {
-                        if (row[column] && row[column].toString().toLowerCase().includes(value.toLowerCase())) {
-                            results.push(row);
-                            break; // Stop checking once a match is found
+                        if (row[column]) {
+                            const rowValue = row[column].toString().trim().toLowerCase();
+                            const searchValue = value.toString().trim().toLowerCase();
+                            
+                            if (rowValue.includes(searchValue)) {
+                                context.log(`✅ Match Found: ${JSON.stringify(row)}`);
+                                results.push(row);
+                                break; // Stop checking once a match is found
+                            }
                         }
-                    }
-                })
-                .on("end", () => resolve(results))
-                .on("error", reject);
-               
-                    // Ensure the column exists in the row
-                    if (!(column in row)) {
-                        context.log(`⚠️ Skipping row due to missing column '${column}': ${JSON.stringify(row)}`);
-                        return;
-                    }
-
-                    // Convert both row[column] and value to string before comparison
-                    const rowValue = row[column] ? row[column].toString().trim().toLowerCase() : "";
-                    const searchValue = value.toString().trim().toLowerCase();
-
-                    if (rowValue.includes(searchValue)) {
-                        context.log(`✅ Match Found: ${JSON.stringify(row)}`);
-                        results.push(row);
                     }
                 })
                 .on("end", () => {
@@ -266,8 +284,9 @@ async function searchDataset(context, filename, column, value) {
                     context.log(`❌ CSV Parsing Failed: ${err.message}`);
                     reject(new Error(`CSV Parsing Failed: ${err.message}`));
                 });
-        }
-     catch (error) {
+        });
+
+    } catch (error) {
         context.log(`❌ Error processing dataset ${filename}: ${error.message}`);
         throw new Error(`Error processing dataset ${filename}: ${error.message}`);
     }
@@ -347,4 +366,5 @@ function isGeneralQuery(message) {
         "where do we buy this pump?"
     ];
     return generalQueries.some(q => message.toLowerCase().includes(q));
+}
 }
