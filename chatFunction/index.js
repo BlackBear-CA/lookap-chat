@@ -63,27 +63,43 @@ class AIDataService {
     `;
   }
 
-  // Description: Main query analysis workflow
-  // 1. Sends query to OpenAI
-  // 2. Processes response
-  // 3. Handles errors gracefully
-  async analyzeQuery(userMessage, context) {
+// Description: Main query analysis workflow
+// 1. Sends query to OpenAI
+// 2. Processes response
+// 3. Handles errors gracefully with a timeout mechanism
+
+async analyzeQuery(userMessage, context) {
     try {
-      context.log("Initializing query analysis...");
-      const response = await this.openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          { role: "system", content: this.ANALYSIS_PROMPT },
-          { role: "user", content: userMessage }
-        ]
-      });
-      
-      return this.parseOpenAIResponse(response, context);
+        context.log("Initializing query analysis...");
+
+        // Set a timeout for OpenAI API request (15 seconds max)
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("OpenAI request timeout")), 15000)
+        );
+
+        const openAIRequest = this.openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [
+                { role: "system", content: this.ANALYSIS_PROMPT },
+                { role: "user", content: userMessage }
+            ]
+        });
+
+        // Race between OpenAI request and timeout
+        const response = await Promise.race([openAIRequest, timeoutPromise]);
+
+        const responseText = response.choices[0]?.message?.content || '';
+        context.log(`Raw AI Response: ${responseText}`);
+
+        return this.parseOpenAIResponse(responseText, context);
     } catch (error) {
-      context.log(`AI Analysis Error: ${error.stack}`);
-      return this.handleAnalysisError(error, context);
+        context.log(`AI Analysis Error: ${error.message}`);
+        return {
+            isValid: false,
+            fallback: "I'm having trouble processing your request. Please try again later."
+        };
     }
-  }
+}
 
   // Description: Parses raw AI response into structured data
   // Extracts dataset, columns, and search value
@@ -267,37 +283,52 @@ class ResponseFormatter {
 /* ========== AZURE FUNCTION ENTRY POINT ========== */
 // Description: Main function handler for Azure Functions
 // Orchestrates query processing workflow with timeout protection:
-// 1. Sets up 8-second timeout promise
-// 2. Runs main processing logic race against timeout
-// 3. Returns appropriate responses or errors
+// 1. Logs request details for debugging slow queries
+// 2. Sets up timeout promise (8 seconds or ENV setting)
+// 3. Runs main processing logic race against timeout
+// 4. Returns appropriate responses or errors
+
 module.exports = async function (context, req) {
+    const startTime = Date.now(); // Start timer to measure execution time
+    context.log(`Received request at ${new Date().toISOString()}`);
+
     const aiService = new AIDataService();
     const blobService = new BlobDataService();
     
+    // Set timeout (default 8s or custom from ENV)
+    const timeoutLimit = ENV.RESPONSE_TIMEOUT || 8000; 
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error(`Timeout after ${ENV.RESPONSE_TIMEOUT}ms`)), ENV.RESPONSE_TIMEOUT)
+        setTimeout(() => reject(new Error(`Timeout after ${timeoutLimit}ms`)), timeoutLimit)
     );
-  
+
     try {
-      const result = await Promise.race([
-        processRequest(context, req, aiService, blobService),
-        timeoutPromise
-      ]);
-      return result;
+        const result = await Promise.race([
+            processRequest(context, req, aiService, blobService),
+            timeoutPromise
+        ]);
+
+        const executionTime = Date.now() - startTime; // Calculate execution time
+        context.log(`Execution completed in ${executionTime}ms`);
+
+        return result;
     } catch (error) {
-      context.log(`Function Error: ${error.stack}`);
-      return {
-        status: 500,
-        body: { 
-          error: "Processing failed",
-          details: error.message.includes("Timeout") 
-            ? "Try using specific inventory terms like SKU numbers or product names" 
-            : error.message,
-          support: "contact@inventory-support.com"
-        }
-      };
+        const executionTime = Date.now() - startTime; // Capture time before error
+        context.log(`Function Error: ${error.stack}`);
+        context.log(`Total Execution Time before failure: ${executionTime}ms`);
+
+        return {
+            status: 500,
+            body: { 
+                error: "Processing failed",
+                details: error.message.includes("Timeout") 
+                    ? "Try using specific inventory terms like SKU numbers or product names" 
+                    : error.message,
+                support: "contact@inventory-support.com",
+                executionTime: `${executionTime}ms`
+            }
+        };
     }
-  };
+};
 
 // Main processing logic extracted for clarity
 async function processRequest(context, req, aiService, blobService) {
