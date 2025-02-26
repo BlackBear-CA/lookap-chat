@@ -97,15 +97,15 @@ class AIDataService {
   
     ### Dataset Selection Protocol
     1. Match query type to these datasets:
-    ${Object.entries(DATASET_MAP).map(([key, val]) => 
-      `- ${val.dataset}: ${val.queries.join(', ')}`
+    ${Object.entries(this.DATASET_MAP).map(([key, val]) => 
+      `- ${val.dataset}: ${val.queries.join(', ')}` // ✅ Correctly using this.DATASET_MAP
     ).join('\n')}
   
     2. Default to warehouseData.csv for ambiguous queries
   
     ### Column Selection Guide
-    ${Object.entries(DATASET_MAP).map(([key, val]) => 
-      `- ${val.dataset}: ${val.columns.join(', ')}`
+    ${Object.entries(this.DATASET_MAP).map(([key, val]) => 
+      `- ${val.dataset}: ${val.columns.join(', ')}` // ✅ Correctly using this.DATASET_MAP
     ).join('\n')}
   
     ### Examples
@@ -131,7 +131,7 @@ class AIDataService {
     - Invalid example (REJECTED):
       {"dataset":null,"columns":[],"value":null,"confidence":0}
     `;
-  }
+}
 
 // Description: Main query analysis workflow
 // 1. Sends query to OpenAI
