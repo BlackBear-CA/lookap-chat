@@ -357,43 +357,41 @@ module.exports = async function (context, req) {
 
 // Main processing logic extracted for clarity
 async function processRequest(context, req, aiService, blobService) {
-    // Validate input
     const userMessage = req.body?.userMessage?.trim();
     if (!userMessage) {
-      return { status: 400, body: { error: "Missing userMessage" } };
+        return { status: 400, body: { error: "Missing userMessage" } };
     }
-  
-    // Analyze query with AI
+
     const analysis = await aiService.analyzeQuery(userMessage, context);
-    
-    // Handle valid dataset query
+
     if (analysis.isValid) {
-      const results = await blobService.queryDataset(
-        context, 
-        analysis.dataset, 
-        analysis.columns, 
-        analysis.value
-      );
-      
-      return {
-        status: 200,
-        headers: { "Content-Type": "application/json" },  // Ensure response is recognized as JSON
-        body: JSON.stringify({
-            message: ResponseFormatter.format(results, analysis.columns, analysis.value, context) || "No response generated."
-        })
-    };
-} 
-// Fallback to AI-generated response
-const openaiResponse = await aiService.openai.chat.completions.create({
-    model: "gpt-4",
-    messages: [{ role: "user", content: userMessage }],
-    max_tokens: 150
-});
+        const results = await blobService.queryDataset(
+            context,
+            analysis.dataset,
+            analysis.columns,
+            analysis.value
+        );
+
+        return {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: ResponseFormatter.format(results, analysis.columns, analysis.value, context)
+            })
+        };
+    } else { // Proper else block
+        const openaiResponse = await aiService.openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "user", content: userMessage }],
+            max_tokens: 150
+        });
+
+        return {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: openaiResponse.choices[0]?.message?.content || analysis.fallback
+            })
+        };
+    }
 }
-return {
-    status: 200,
-    headers: { "Content-Type": "application/json" },  // Ensure JSON enforcement
-    body: JSON.stringify({
-        message: openaiResponse.choices[0]?.message?.content || analysis.fallback
-    })
-};
