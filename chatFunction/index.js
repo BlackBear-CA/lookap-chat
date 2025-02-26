@@ -457,40 +457,95 @@ module.exports = async function (context, req) {
 
 // Main processing logic extracted for clarity
 async function processRequest(context, req, aiService, blobService) {
-    const userMessage = req.body?.userMessage?.trim();
-    if (!userMessage) {
-        return { status: 400, body: { error: "Missing userMessage" } };
-    }
+    try {
+        const userMessage = req.body?.userMessage?.trim();
+        
+        if (!userMessage) {
+            return { 
+                status: 400, 
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ error: "Missing userMessage" }) 
+            };
+        }
 
-    const analysis = await aiService.analyzeQuery(userMessage, context);
+        context.log(`Received userMessage: "${userMessage}"`);
 
-    if (analysis.isValid) {
-        const results = await blobService.queryDataset(
-            context,
-            analysis.dataset,
-            analysis.columns,
-            analysis.value
-        );
+        // Perform AI query analysis
+        const analysis = await aiService.analyzeQuery(userMessage, context);
+        context.log("AI Analysis Result:", JSON.stringify(analysis, null, 2));
+
+        if (analysis.isValid) {
+            try {
+                // Query dataset if AI analysis is valid
+                const results = await blobService.queryDataset(
+                    context,
+                    analysis.dataset,
+                    analysis.columns,
+                    analysis.value
+                );
+
+                context.log("Dataset Query Results:", JSON.stringify(results, null, 2));
+
+                return {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        message: ResponseFormatter.format(results, analysis.columns, analysis.value, context)
+                    })
+                };
+            } catch (datasetError) {
+                context.log("Dataset Query Error:", datasetError.message);
+
+                return {
+                    status: 500,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        error: "Dataset query failed",
+                        details: datasetError.message
+                    })
+                };
+            }
+        } else {
+            try {
+                // If dataset lookup fails, fallback to OpenAI response
+                const openaiResponse = await aiService.openai.chat.completions.create({
+                    model: "gpt-4",
+                    messages: [{ role: "user", content: userMessage }],
+                    max_tokens: 150
+                });
+
+                context.log("OpenAI Raw Response:", JSON.stringify(openaiResponse, null, 2));
+
+                const message = openaiResponse.choices?.[0]?.message?.content || analysis.fallback;
+                context.log("Processed OpenAI Message:", message);
+
+                return {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message })
+                };
+            } catch (openaiError) {
+                context.log("OpenAI Request Error:", openaiError.message);
+
+                return {
+                    status: 500,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        error: "AI processing failed",
+                        details: openaiError.message
+                    })
+                };
+            }
+        }
+    } catch (error) {
+        context.log("Unexpected Error in processRequest:", error.stack);
 
         return {
-            status: 200,
+            status: 500,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                message: ResponseFormatter.format(results, analysis.columns, analysis.value, context)
-            })
-        };
-    } else { // Proper else block
-        const openaiResponse = await aiService.openai.chat.completions.create({
-            model: "gpt-4",
-            messages: [{ role: "user", content: userMessage }],
-            max_tokens: 150
-        });
-
-        return {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                message: openaiResponse.choices[0]?.message?.content || analysis.fallback
+                error: "Unexpected server error",
+                details: error.message
             })
         };
     }
