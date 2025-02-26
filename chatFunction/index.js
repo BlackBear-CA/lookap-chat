@@ -73,12 +73,15 @@ async analyzeQuery(userMessage, context) {
         context.log("Initializing query analysis...");
 
         // Set a timeout for OpenAI API request (15 seconds max)
+        const timeoutLimit = 15000; // 15 seconds
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("OpenAI request timeout")), 15000)
+            setTimeout(() => reject(new Error("OpenAI request timeout")), timeoutLimit)
         );
 
         const openAIRequest = this.openai.chat.completions.create({
             model: "gpt-4",
+            temperature: 0.2,  // Reduce randomness for structured responses
+            max_tokens: 200,    // Limit response size
             messages: [
                 { role: "system", content: this.ANALYSIS_PROMPT },
                 { role: "user", content: userMessage }
@@ -88,10 +91,32 @@ async analyzeQuery(userMessage, context) {
         // Race between OpenAI request and timeout
         const response = await Promise.race([openAIRequest, timeoutPromise]);
 
-        const responseText = response.choices[0]?.message?.content || '';
+        if (!response || !response.choices || response.choices.length === 0) {
+            throw new Error("OpenAI returned an empty response");
+        }
+
+        const responseText = response.choices[0]?.message?.content?.trim();
+        if (!responseText) {
+            throw new Error("OpenAI response is empty or malformed");
+        }
+
         context.log(`Raw AI Response: ${responseText}`);
 
-        return this.parseOpenAIResponse(responseText, context);
+        // Ensure response is in JSON format
+        let parsedResponse;
+        try {
+            parsedResponse = JSON.parse(responseText);
+        } catch (jsonError) {
+            throw new Error(`Failed to parse OpenAI response as JSON: ${responseText}`);
+        }
+
+        // Validate parsed JSON structure
+        if (!parsedResponse.dataset || !parsedResponse.columns || !parsedResponse.value) {
+            throw new Error(`Incomplete data received from OpenAI: ${JSON.stringify(parsedResponse)}`);
+        }
+
+        return { ...parsedResponse, isValid: true };
+        
     } catch (error) {
         context.log(`AI Analysis Error: ${error.message}`);
         return {
@@ -352,22 +377,23 @@ async function processRequest(context, req, aiService, blobService) {
       
       return {
         status: 200,
-        body: {
+        headers: { "Content-Type": "application/json" },  // Ensure response is recognized as JSON
+        body: JSON.stringify({
             message: ResponseFormatter.format(results, analysis.columns, analysis.value, context) || "No response generated."
-        }
+        })
     };
-    
-    }
-  
-    // Fallback to AI-generated response
-    const openaiResponse = await aiService.openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [{ role: "user", content: userMessage }],
-      max_tokens: 150
-    });
-  
-    return {
-      status: 200,
-      body: { message: openaiResponse.choices[0].message.content || analysis.fallback }
-    };
+} 
+// Fallback to AI-generated response
+const openaiResponse = await aiService.openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: userMessage }],
+    max_tokens: 150
+});
 }
+return {
+    status: 200,
+    headers: { "Content-Type": "application/json" },  // Ensure JSON enforcement
+    body: JSON.stringify({
+        message: openaiResponse.choices[0]?.message?.content || analysis.fallback
+    })
+};
