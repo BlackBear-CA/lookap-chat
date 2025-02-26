@@ -458,15 +458,10 @@ module.exports = async function (context, req) {
 // Main processing logic extracted for clarity
 async function processRequest(context, req, aiService, blobService) {
     try {
-        context.log("🔹 Incoming request body:", JSON.stringify(req.body));
+        context.log("Incoming request body:", JSON.stringify(req.body));
 
-        // Validate request body
-        if (!req.body || typeof req.body !== "object") {
-            context.log("❌ Error: Request body is missing or invalid.");
-            return generateResponse(400, { error: "Invalid request body format." });
-        }
-
-        if (!req.body.userMessage || typeof req.body.userMessage !== "string") {
+        // Ensure request body exists and userMessage is present
+        if (!req.body || !req.body.userMessage || typeof req.body.userMessage !== "string") {
             context.log("❌ Error: Missing or invalid 'userMessage' in request body.");
             return generateResponse(400, { error: "Missing or invalid 'userMessage' in request body." });
         }
@@ -490,16 +485,23 @@ async function processRequest(context, req, aiService, blobService) {
 
                 context.log("📊 Dataset Query Results:", JSON.stringify(results, null, 2));
 
-                // Handle empty dataset results
-                if (!results || results.length === 0) {
-                    context.log("⚠️ No matching records found in dataset.");
-                    return generateResponse(200, { message: "No matching records found in the dataset." });
+                // If results exist, return structured response
+                if (results.length > 0) {
+                    return generateResponse(200, {
+                        success: true,
+                        message: "Matching SKUs found",
+                        data: results.map(item => ({
+                            sku: item.sku_id,
+                            description: item.item_description,
+                            manufacturer: item.manufacturer,
+                            part_number: item.mfg_part_nos,
+                            category: item.item_main_category,
+                            sub_category: item.item_sub_category
+                        }))
+                    });
+                } else {
+                    return generateResponse(404, { success: false, message: "No matching SKUs found." });
                 }
-
-                return generateResponse(200, {
-                    message: ResponseFormatter.format(results, analysis.columns, analysis.value, context)
-                });
-
             } catch (datasetError) {
                 context.log("❌ Dataset Query Error:", datasetError.message);
                 return generateResponse(500, { error: "Dataset query failed", details: datasetError.message });
@@ -513,13 +515,12 @@ async function processRequest(context, req, aiService, blobService) {
                     max_tokens: 150
                 });
 
-                context.log("🤖 OpenAI Raw Response:", JSON.stringify(openaiResponse, null, 2));
+                context.log("💬 OpenAI Raw Response:", JSON.stringify(openaiResponse, null, 2));
 
-                const message = openaiResponse.choices?.[0]?.message?.content || "I couldn't generate a response.";
-                context.log("📝 Processed OpenAI Message:", message);
+                const message = openaiResponse.choices?.[0]?.message?.content || analysis.fallback;
+                context.log("Processed OpenAI Message:", message);
 
-                return generateResponse(200, { message });
-
+                return generateResponse(200, { success: true, message });
             } catch (openaiError) {
                 context.log("❌ OpenAI Request Error:", openaiError.message);
                 return generateResponse(500, { error: "AI processing failed", details: openaiError.message });
@@ -531,13 +532,19 @@ async function processRequest(context, req, aiService, blobService) {
     }
 }
 
-// ✅ Utility function to standardize responses
-function generateResponse(statusCode, bodyObject) {
+// ✅ Helper function to standardize API responses
+function generateResponse(status, body) {
     return {
-        status: statusCode,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyObject)
+        status,
+        headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
+        },
+        body: JSON.stringify(body)
     };
 }
+
 
 
