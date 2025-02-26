@@ -9,7 +9,8 @@ const DATASETS_CONTAINER = "datasets";
 module.exports = async function (context, req) {  // Ensure this is async
     context.log("🔹 Chat function triggered.");
 
-    const userMessage = req.body && req.body.userMessage ? req.body.userMessage.trim() : null;
+    // 1) Validate user message
+    const userMessage = req.body?.userMessage?.trim() ?? null; // Simplified null check
     context.log("📩 Received user message:", userMessage);
 
     if (!userMessage) {
@@ -24,7 +25,7 @@ module.exports = async function (context, req) {  // Ensure this is async
         if (dataset && columns && value) {
             context.log(`📂 Attempting to fetch data from: ${dataset}, Columns: [${columns.join(", ")}], Value: ${value}`);
             try {
-                let searchResults = await searchDataset(context, dataset, columns, value);
+                const searchResults = await searchDataset(context, dataset, columns, value);
 
                 if (searchResults.length > 0) {
                     context.res = { status: 200, body: { message: formatResults(searchResults, columns, value, context) } };
@@ -39,12 +40,14 @@ module.exports = async function (context, req) {  // Ensure this is async
             }
         }
 
+        // 3) Use fallback message if no structured query was parsed
         if (fallbackMessage) {
             context.log("🔎 Using fallback response from analyzeUserQuery:", fallbackMessage);
             context.res = { status: 200, body: { message: fallbackMessage } };
             return;
         }
 
+        // 4) Fallback to OpenAI API if no structured query or fallback message is available
         context.log("💡 Sending user message to OpenAI API (fallback)...");
         const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
         const chatResponse = await openai.chat.completions.create({
