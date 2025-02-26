@@ -136,6 +136,11 @@ class BlobDataService {
     this.serviceClient = BlobServiceClient.fromConnectionString(
       ENV.AZURE_STORAGE_CONNECTION_STRING
     );
+    this.columnMappings = {
+        'soh uom': ['soh', 'uom'],
+        'rop maxStock mrpType': ['rop', 'maxStock', 'mrpType'],
+        'sku_id item_description': ['sku_id', 'item_description']
+      };
   }
 
   // Description: Main dataset query workflow
@@ -172,37 +177,54 @@ class BlobDataService {
   async processCSVData(stream, columns, value, context) {
     return new Promise((resolve, reject) => {
       const results = [];
-      const parser = csv.parseStream(stream, { headers: true, trim: true });
+      let normalizedHeaders = [];
+      const parser = csv.parseStream(stream, {
+        headers: headers => this.normalizeHeaders(headers),
+        trim: true
+      });
 
       parser
-        .on("headers", headers => this.validateColumns(headers, columns, context))
-        .on("data", row => this.processRow(row, columns, value, results, context))
-        .on("end", () => resolve(results))
-        .on("error", error => reject(error));
-    });
-  }
+      .on("headers", headers => {
+        normalizedHeaders = headers;
+        this.validateColumns(headers, columns, context);
+      })
+      .on("data", row => this.processNormalizedRow(row, normalizedHeaders, columns, value, results, context))
+      .on("end", () => resolve(results))
+      .on("error", error => reject(error));
+  });
+}
 
-  // Description: Validates requested columns against CSV headers
-  validateColumns(headers, targetColumns, context) {
-    const validColumns = targetColumns.filter(col => headers.includes(col));
+  // Description: Validates requested columns against NORMALIZED headers
+  validateColumns(normalizedHeaders, targetColumns, context) {
+    // Check if all target columns exist in normalized headers
+    const validColumns = targetColumns.filter(col => 
+      normalizedHeaders.includes(col)
+    );
+    
     if (validColumns.length === 0) {
-      throw new Error(`No valid columns found in: ${headers.join(", ")}`);
+      throw new Error(`No valid columns found. Available: ${normalizedHeaders.join(", ")}`);
     }
-    context.log(`Valid columns: ${validColumns.join(", ")}`);
+    
+    context.log(`Valid normalized columns: ${validColumns.join(", ")}`);
   }
 
-  // Description: Processes individual CSV rows
-  // Applies case-insensitive search across specified columns
-  processRow(row, columns, value, results, context) {
-    const searchValue = value.toLowerCase();
-    for (const col of columns) {
-      const cellValue = (row[col] || "").toString().toLowerCase();
-      if (cellValue.includes(searchValue)) {
-        results.push(row);
-        context.log(`Match found in column ${col}: ${cellValue}`);
-        break;
+  // Description: Processes rows using NORMALIZED columns
+  processRow(normalizedRow, validColumns, searchValue, results, context) {
+    const searchTerm = searchValue.toLowerCase();
+    
+    validColumns.forEach(col => {
+      const cellValue = normalizedRow[col]?.toString().toLowerCase() || '';
+      
+      if (cellValue.includes(searchTerm)) {
+        results.push({
+          ...normalizedRow,
+          matchedColumn: col,
+          matchedValue: cellValue
+        });
+        context.log(`Matched ${col}: ${cellValue}`);
+        return; // Stop after first match
       }
-    }
+    });
   }
 }
 
@@ -254,32 +276,30 @@ module.exports = async function (context, req) {
     const aiService = new AIDataService();
     const blobService = new BlobDataService();
     
-    // Timeout protection (8 seconds)
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Timeout after 8s")), 8000)
+      setTimeout(() => reject(new Error(`Timeout after ${ENV.RESPONSE_TIMEOUT}ms`)), ENV.RESPONSE_TIMEOUT)
     );
-
+  
     try {
-      // Race processing against timeout
       const result = await Promise.race([
         processRequest(context, req, aiService, blobService),
         timeoutPromise
       ]);
-      
       return result;
-      
     } catch (error) {
       context.log(`Function Error: ${error.stack}`);
       return {
         status: 500,
         body: { 
           error: "Processing failed",
-          details: error.message,
-          guidance: "Please try a more specific inventory-related query"
+          details: error.message.includes("Timeout") 
+            ? "Try using specific inventory terms like SKU numbers or product names" 
+            : error.message,
+          support: "contact@inventory-support.com"
         }
       };
     }
-};
+  };
 
 // Main processing logic extracted for clarity
 async function processRequest(context, req, aiService, blobService) {
