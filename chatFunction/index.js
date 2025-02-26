@@ -2,9 +2,15 @@ const { BlobServiceClient } = require("@azure/storage-blob");
 const OpenAI = require("openai");
 const csv = require("fast-csv");
 
+// Environment variables
 const AZURE_STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DATASETS_CONTAINER = "datasets";
+
+// Validate environment variables at startup
+if (!AZURE_STORAGE_CONNECTION_STRING || !OPENAI_API_KEY) {
+    throw new Error("Missing required environment variables: AZURE_STORAGE_CONNECTION_STRING or OPENAI_API_KEY.");
+}
 
 module.exports = async function (context, req) {
     context.log("🔹 Chat function triggered.");
