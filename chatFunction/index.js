@@ -64,7 +64,7 @@ module.exports = async function (context, req) {
 async function analyzeUserQuery(userMessage, context) { 
     context.log("🔍 Analyzing user query using OpenAI...");
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
+}
     const prompt = `
     You are an AI assistant that helps users retrieve structured data from an inventory system. Users may search using SKU IDs, stock numbers, manufacturer names, part numbers, or keywords like "pump" or "filter."
     
