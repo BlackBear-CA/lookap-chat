@@ -486,11 +486,14 @@ async function processRequest(context, req, aiService, blobService) {
 
                 context.log("Dataset Query Results:", JSON.stringify(results, null, 2));
 
+                const formattedMessage = ResponseFormatter.format(results, analysis.columns, analysis.value, context);
+                context.log("Formatted Response:", formattedMessage);
+
                 return {
                     status: 200,
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        message: ResponseFormatter.format(results, analysis.columns, analysis.value, context)
+                        message: formattedMessage || "No response generated."
                     })
                 };
             } catch (datasetError) {
@@ -516,7 +519,7 @@ async function processRequest(context, req, aiService, blobService) {
 
                 context.log("OpenAI Raw Response:", JSON.stringify(openaiResponse, null, 2));
 
-                const message = openaiResponse.choices?.[0]?.message?.content || analysis.fallback;
+                const message = openaiResponse.choices?.[0]?.message?.content || analysis.fallback || "No response from AI.";
                 context.log("Processed OpenAI Message:", message);
 
                 return {
