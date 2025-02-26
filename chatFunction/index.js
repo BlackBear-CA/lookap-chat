@@ -6,11 +6,11 @@ const AZURE_STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STR
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const DATASETS_CONTAINER = "datasets";
 
-module.exports = async function (context, req) {  // Ensure this is async
+module.exports = async function (context, req) {
     context.log("🔹 Chat function triggered.");
 
     // 1) Validate user message
-    const userMessage = req.body?.userMessage?.trim() ?? null; // Simplified null check
+    const userMessage = req.body?.userMessage?.trim() ?? null;
     context.log("📩 Received user message:", userMessage);
 
     if (!userMessage) {
@@ -63,6 +63,27 @@ module.exports = async function (context, req) {  // Ensure this is async
         context.res = { status: 500, body: { message: "Error processing request: " + error.message } };
     }
 };
+
+// Helper Functions (Ensure these are async if they use await)
+async function analyzeUserQuery(userMessage, context) {
+    // Example: Parse userMessage to extract dataset, columns, value, and fallbackMessage
+    return {
+        dataset: "example-dataset",
+        columns: ["column1", "column2"],
+        value: "example-value",
+        fallbackMessage: "No structured query found.",
+    };
+}
+
+async function searchDataset(context, dataset, columns, value) {
+    // Example: Query Azure Blob Storage or another data source
+    return []; // Return an array of results
+}
+
+function formatResults(results, columns, value, context) {
+    // Example: Format results into a string or structured response
+    return `Found ${results.length} results for '${value}' in columns [${columns.join(", ")}].`;
+}
 
 /**
  * 🔍 Uses OpenAI to analyze user queries and determine dataset, column, and search value.
@@ -138,75 +159,61 @@ Reply conversationally but include structured data inside `<response>` tags.
 Does this help?"
 `;
 
-try {
-    // ✅ Log API call before execution
-    context.log("🚀 Sending request to OpenAI API...");
-    
-    // ✅ Ensure response is defined before accessing it
-    const response = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [{ role: "system", content: prompt }]
-    });
+    try {
+        context.log("🚀 Sending request to OpenAI API...");
+        const response = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "system", content: prompt }]
+        });
 
-    // ✅ Log full response from OpenAI
-    context.log(`✅ OpenAI Response: ${JSON.stringify(response, null, 2)}`);
+        context.log(`✅ OpenAI Response: ${JSON.stringify(response, null, 2)}`);
 
-    // ✅ Ensure `choices` exists before accessing it
-    if (!response || !response.choices || response.choices.length === 0) {
-        context.log("⚠️ OpenAI response is empty or malformed.");
-        return { dataset: null, columns: null, value: null, fallbackMessage: "I’m not sure what you’re asking. Please try again." };
-    }
+        if (!response?.choices?.[0]?.message?.content) {
+            context.log("⚠️ OpenAI response is empty or malformed.");
+            return { dataset: null, columns: null, value: null, fallbackMessage: "I’m not sure what you’re asking. Please try again." };
+        }
 
-    const responseText = response.choices[0]?.message?.content || "";
-    context.log(`📩 Extracted Response: ${responseText}`);
+        const responseText = response.choices[0].message.content;
+        context.log(`📩 Extracted Response: ${responseText}`);
 
-    if (!responseText) {
-        context.log("⚠️ OpenAI response does not contain expected content.");
-        return { dataset: null, columns: null, value: null, fallbackMessage: "I couldn't extract any useful data from the response." };
-    }
+        // Parse dataset, columns, and value from the response
+        const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
+        const columnsMatch = responseText.match(/Columns?:\s*\[?([\w,\s-]+)\]?/i);
+        const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
 
-    // ✅ Parsing logic
-    const datasetMatch = responseText.match(/Dataset:\s*([\w.]+\.csv)/i);
-    const columnsMatch = responseText.match(/Columns?:\s*\[?([\w,\s-]+)\]?/i);
-    const valueMatch = responseText.match(/Value:\s*([\w\d]+)/i);
+        const dataset = datasetMatch?.[1] || null;
+        const columnsRaw = columnsMatch?.[1] || null;
+        const value = valueMatch?.[1] || null;
 
-    let dataset = datasetMatch ? datasetMatch[1] : null;
-    let columnsRaw = columnsMatch ? columnsMatch[1] : null;
-    let value = valueMatch ? valueMatch[1] : null;
+        const columns = columnsRaw ? columnsRaw.split(",").map((c) => c.trim()).filter((x) => !!x) : null;
 
-    let columns = null;
-    if (columnsRaw) {
-        columns = columnsRaw.split(",").map((c) => c.trim()).filter((x) => !!x);
-    }
+        if (!dataset || !columns || !value) {
+            context.log("⚠️ Missing dataset, columns, or value in OpenAI response -> fallback.");
+            return {
+                dataset: null,
+                columns: null,
+                value: null,
+                fallbackMessage: "I'm not sure about that exact query, but I can help look up stock levels, suppliers, or material info. What exactly do you need?",
+            };
+        }
 
-    if (!dataset || !columns || !value) {
-        context.log("⚠️ Missing dataset, columns, or value in OpenAI response -> fallback.");
+        context.log(`✅ Parsed Response - Dataset: ${dataset}, Columns: ${JSON.stringify(columns)}, Value: ${value}`);
+        return { dataset, columns, value, fallbackMessage: null };
+
+    } catch (error) {
+        context.log(`❌ OpenAI API Error: ${error.message}`);
+        if (error.response) {
+            context.log(`🔴 OpenAI API Response Code: ${error.response.status}`);
+            context.log(`📩 OpenAI API Response Data: ${JSON.stringify(error.response.data, null, 2)}`);
+        }
+
         return {
             dataset: null,
             columns: null,
             value: null,
-            fallbackMessage: "I'm not sure about that exact query, but I can help look up stock levels, suppliers, or material info. What exactly do you need?",
+            fallbackMessage: "I encountered an issue retrieving your data. Please try again later.",
         };
     }
-
-    context.log(`✅ Parsed Response - Dataset: ${dataset}, Columns: ${JSON.stringify(columns)}, Value: ${value}`);
-    return { dataset, columns, value, fallbackMessage: null };
-
-} catch (error) {
-    context.log(`❌ OpenAI API Error: ${error.message}`);
-    
-    if (error.response) {
-        context.log(`🔴 OpenAI API Response Code: ${error.response.status}`);
-        context.log(`📩 OpenAI API Response Data: ${JSON.stringify(error.response.data, null, 2)}`);
-    }
-
-    return {
-        dataset: null,
-        columns: null,
-        value: null,
-        fallbackMessage: "I encountered an issue retrieving your data. Please try again later.",
-    };
-}
 }
 
 /**
@@ -287,65 +294,57 @@ async function searchDataset(context, filename, columns, value) {
 
 /**
  * 📜 Converts the results into a conversational response.
- * Accepts multiple columns but also uses the first relevant column
- * for single-result display if needed.
  */
 function formatResults(results, columns, value, context) {
     if (!Array.isArray(results) || results.length === 0) {
-      return "I couldn't find any matching records. Would you like me to check something else?";
+        return "I couldn't find any matching records. Would you like me to check something else?";
     }
-  
-    // If we have multiple columns, the script can show a combined view or just the first column in a user-friendly manner
-    // This part is adjustable based on your actual requirement.
-  
+
     // Handle multiple results
     if (results.length > 1) {
-      let response = "Here are some matching results:\n";
-      results.forEach((row, index) => {
-        // We'll use the first column in columns array to display
-        const colToShow = columns[0];
-        const colValue = row[colToShow] || "Unknown";
-        const sku = row["sku_id"] || "Unknown SKU";
-        const description = row["item_description"] || "No description available";
-  
-        response += `${index + 1}. SKU ${sku}, ${colToShow}: ${colValue} - ${description}\n`;
-      });
-      return response + "Let me know if you need details on a specific item.";
+        let response = "Here are some matching results:\n";
+        results.forEach((row, index) => {
+            const colToShow = columns[0];
+            const colValue = row[colToShow] || "Unknown";
+            const sku = row["sku_id"] || "Unknown SKU";
+            const description = row["item_description"] || "No description available";
+
+            response += `${index + 1}. SKU ${sku}, ${colToShow}: ${colValue} - ${description}\n`;
+        });
+        return response + "Let me know if you need details on a specific item.";
     }
-  
+
     // Single result
     const row = results[0];
-    // We'll assume we display the first column in the array
     const mainColumn = columns[0];
     const requestedValue = row[mainColumn] || "Unknown";
-  
+
     // Provide a basic context-aware response
     switch (mainColumn) {
-      case "soh":
-        return `The current stock on hand for SKU ${row.sku_id || "Unknown"} is ${requestedValue}. Let me know if you need more details.`;
-      case "vendorName":
-        return `SKU ${row.sku_id || "Unknown"} is typically purchased from ${requestedValue}. Let me know if you need supplier details.`;
-      case "manufacturer":
-        return `SKU ${row.sku_id || "Unknown"} is manufactured by ${requestedValue}. Let me know if you need technical specs.`;
-      case "item_description":
-        // Possibly they asked for "pump" or "motor" in item_description
-        return `Yes, we found SKU ${row.sku_id || "Unknown"} described as "${requestedValue}". Anything else?`;
-      default:
-        return `The requested information for ${mainColumn} is ${requestedValue}. Let me know if you need anything else.`;
+        case "soh":
+            return `The current stock on hand for SKU ${row.sku_id || "Unknown"} is ${requestedValue}. Let me know if you need more details.`;
+        case "vendorName":
+            return `SKU ${row.sku_id || "Unknown"} is typically purchased from ${requestedValue}. Let me know if you need supplier details.`;
+        case "manufacturer":
+            return `SKU ${row.sku_id || "Unknown"} is manufactured by ${requestedValue}. Let me know if you need technical specs.`;
+        case "item_description":
+            return `Yes, we found SKU ${row.sku_id || "Unknown"} described as "${requestedValue}". Anything else?`;
+        default:
+            return `The requested information for ${mainColumn} is ${requestedValue}. Let me know if you need anything else.`;
     }
-  }
+}
   
-  /**
-   * 📥 Converts a readable stream into a string.
-   */
-  async function streamToString(stream) {
+/**
+ * 📥 Converts a readable stream into a string.
+ */
+async function streamToString(stream) {
     return new Promise((resolve, reject) => {
-      const chunks = [];
-      stream.on("data", (chunk) => chunks.push(chunk));
-      stream.on("end", () => resolve(Buffer.concat(chunks).toString()));
-      stream.on("error", reject);
+        const chunks = [];
+        stream.on("data", (chunk) => chunks.push(chunk));
+        stream.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        stream.on("error", reject);
     });
-  }
+}
 
 /**
  * Helper function to check if a query is too general.
