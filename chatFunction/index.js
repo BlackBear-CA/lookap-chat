@@ -352,8 +352,11 @@ async function processRequest(context, req, aiService, blobService) {
       
       return {
         status: 200,
-        body: { message: ResponseFormatter.format(results, analysis.columns, analysis.value, context) }
-      };
+        body: {
+            message: ResponseFormatter.format(results, analysis.columns, analysis.value, context) || "No response generated."
+        }
+    };
+    
     }
   
     // Fallback to AI-generated response
