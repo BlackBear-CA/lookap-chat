@@ -15,5 +15,6 @@
       "direction": "out",
       "name": "res"
     }
-  ]
+  ],
+  "timeout": "00:05:00"  
 }
