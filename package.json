@@ -3,6 +3,6 @@
     "@azure/storage-blob": "^12.26.0",
     "dotenv": "^16.4.7",
     "fast-csv": "^5.0.2",
-    "openai": "^4.85.3"
+    "openai": "^4.85.4"
   }
 }
