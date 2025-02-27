@@ -51,39 +51,43 @@ class CasualChatService {
 }
 
 module.exports = async function (context, req) {
-    context.log("Received request for casualChatFunction");
+    context.log("🔵 Received request for casualChatFunction");
 
+    // Validate API key
     if (!ENV.OPENAI_API_KEY) {
-        context.log("❌ Missing OpenAI API Key!");
-        return generateResponse(500, { error: "Server configuration issue." });
+        context.log("❌ OpenAI API Key is missing!");
+        return generateResponse(500, { error: "Server misconfiguration: API Key missing" });
     }
 
     try {
+        // Validate user input
         if (!req.body || !req.body.userMessage) {
-            context.log("❌ Missing 'userMessage' in request body.");
+            context.log("❌ Error: Missing user input.");
             return generateResponse(400, { error: "Missing user input." });
         }
 
         const userMessage = req.body.userMessage.trim();
-        context.log(`📩 User input: "${userMessage}"`);
+        context.log(`📩 User Message: "${userMessage}"`);
 
-        // Call OpenAI GPT-4
+        // Initialize OpenAI Client
         const openai = new OpenAI({ apiKey: ENV.OPENAI_API_KEY });
 
+        // Call OpenAI API (Normal Chat)
         const openaiResponse = await openai.chat.completions.create({
             model: "gpt-4",
-            messages: [
-                { role: "system", content: "You are a helpful AI assistant providing conversational responses." },
-                { role: "user", content: userMessage }
-            ],
-            max_tokens: 150,
+            messages: [{ role: "user", content: userMessage }],
+            max_tokens: 200,
             temperature: 0.7
         });
 
-        context.log("🔍 OpenAI Response:", JSON.stringify(openaiResponse, null, 2));
+        if (!openaiResponse || !openaiResponse.choices || !openaiResponse.choices[0]) {
+            throw new Error("Invalid OpenAI response format.");
+        }
 
-        const message = openaiResponse.choices?.[0]?.message?.content || "I couldn't understand that.";
-        return generateResponse(200, { success: true, message });
+        const aiMessage = openaiResponse.choices[0].message.content;
+        context.log(`💬 OpenAI Response: "${aiMessage}"`);
+
+        return generateResponse(200, { success: true, message: aiMessage });
 
     } catch (error) {
         context.log("🚨 OpenAI Request Failed:", error.message);
@@ -91,7 +95,7 @@ module.exports = async function (context, req) {
     }
 };
 
-// ✅ Helper function for standardized responses
+// ✅ Helper function for API responses
 function generateResponse(status, body) {
     return {
         status,
@@ -99,4 +103,3 @@ function generateResponse(status, body) {
         body: JSON.stringify(body)
     };
 }
-
