@@ -475,37 +475,45 @@ async function processRequest(context, req, aiService, blobService) {
 
         if (analysis.isValid) {
             try {
-                // Query dataset if AI analysis is valid
+                // Query dataset
                 const results = await blobService.queryDataset(
                     context,
                     analysis.dataset,
                     analysis.columns,
                     analysis.value
                 );
-
+        
                 context.log("📊 Dataset Query Results:", JSON.stringify(results, null, 2));
-
-                // If results exist, return structured response
-                if (results.length > 0) {
+        
+                if (!results || results.length === 0) {
                     return generateResponse(200, {
-                        success: true,
-                        message: "Matching SKUs found",
-                        data: results.map(item => ({
-                            sku: item.sku_id,
-                            description: item.item_description,
-                            manufacturer: item.manufacturer,
-                            part_number: item.mfg_part_nos,
-                            category: item.item_main_category,
-                            sub_category: item.item_sub_category
-                        }))
+                        success: false,
+                        message: `No matching records found for '${analysis.value}'.`,
+                        data: []
                     });
-                } else {
-                    return generateResponse(404, { success: false, message: "No matching SKUs found." });
                 }
+        
+                return generateResponse(200, {
+                    success: true,
+                    message: "Matching SKUs found",
+                    data: results.map(item => ({
+                        sku: item.sku_id,
+                        description: item.item_description,
+                        manufacturer: item.manufacturer,
+                        part_number: item.mfg_part_nos,
+                        category: item.item_main_category,
+                        sub_category: item.item_sub_category
+                    }))
+                });
+        
             } catch (datasetError) {
                 context.log("❌ Dataset Query Error:", datasetError.message);
-                return generateResponse(500, { error: "Dataset query failed", details: datasetError.message });
+                return generateResponse(500, {
+                    error: "Dataset query failed",
+                    details: datasetError.message
+                });
             }
+                    
         } else {
             try {
                 // If dataset lookup fails, fallback to OpenAI response
@@ -550,7 +558,3 @@ function generateResponse(status, body) {
         body: JSON.stringify(body) // Ensure JSON is properly formatted
     };
 }
-
-
-
-
