@@ -51,38 +51,52 @@ class CasualChatService {
 }
 
 module.exports = async function (context, req) {
-    context.log("Received a request for casualChatFunction");
+    context.log("Received request for casualChatFunction");
 
-    const userMessage = req.body?.userMessage || "";
-    
-    if (!userMessage) {
-        context.log("Error: No userMessage received.");
-        context.res = {
-            status: 400,
-            body: JSON.stringify({ error: "Missing userMessage in request." })
-        };
-        return;
+    if (!ENV.OPENAI_API_KEY) {
+        context.log("❌ Missing OpenAI API Key!");
+        return generateResponse(500, { error: "Server configuration issue." });
     }
 
     try {
-        // Sample AI response (Replace with OpenAI call if implemented)
-        const aiResponse = `You said: "${userMessage}". I'm here to assist you!`;
+        if (!req.body || !req.body.userMessage) {
+            context.log("❌ Missing 'userMessage' in request body.");
+            return generateResponse(400, { error: "Missing user input." });
+        }
 
-        context.log("AI Response:", aiResponse);
+        const userMessage = req.body.userMessage.trim();
+        context.log(`📩 User input: "${userMessage}"`);
 
-        // Ensure response is returned as JSON
-        context.res = {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ success: true, message: aiResponse })
-        };
+        // Call OpenAI GPT-4
+        const openai = new OpenAI({ apiKey: ENV.OPENAI_API_KEY });
+
+        const openaiResponse = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [
+                { role: "system", content: "You are a helpful AI assistant providing conversational responses." },
+                { role: "user", content: userMessage }
+            ],
+            max_tokens: 150,
+            temperature: 0.7
+        });
+
+        context.log("🔍 OpenAI Response:", JSON.stringify(openaiResponse, null, 2));
+
+        const message = openaiResponse.choices?.[0]?.message?.content || "I couldn't understand that.";
+        return generateResponse(200, { success: true, message });
 
     } catch (error) {
-        context.log("Error in processing:", error.message);
-        context.res = {
-            status: 500,
-            body: JSON.stringify({ error: "Internal server error", details: error.message })
-        };
+        context.log("🚨 OpenAI Request Failed:", error.message);
+        return generateResponse(500, { error: "Failed to process request.", details: error.message });
     }
 };
+
+// ✅ Helper function for standardized responses
+function generateResponse(status, body) {
+    return {
+        status,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    };
+}
 
