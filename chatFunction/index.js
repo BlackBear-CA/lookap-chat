@@ -534,6 +534,11 @@ async function processRequest(context, req, aiService, blobService) {
 
 // ✅ Helper function to standardize API responses
 function generateResponse(status, body) {
+    // Ensure body is always valid JSON
+    if (!body || typeof body !== "object") {
+        body = { success: false, message: "Unexpected response format" };
+    }
+
     return {
         status,
         headers: {
@@ -542,9 +547,10 @@ function generateResponse(status, body) {
             "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type"
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body) // Ensure JSON is properly formatted
     };
 }
+
 
 
 
