@@ -51,13 +51,38 @@ class CasualChatService {
 }
 
 module.exports = async function (context, req) {
-  const chatService = new CasualChatService();
+    context.log("Received a request for casualChatFunction");
 
-  if (!req.body || !req.body.userMessage || typeof req.body.userMessage !== "string") {
-    return { status: 400, body: { error: "Missing or invalid 'userMessage'" } };
-  }
+    const userMessage = req.body?.userMessage || "";
+    
+    if (!userMessage) {
+        context.log("Error: No userMessage received.");
+        context.res = {
+            status: 400,
+            body: JSON.stringify({ error: "Missing userMessage in request." })
+        };
+        return;
+    }
 
-  const userMessage = req.body.userMessage.trim();
-  const result = await chatService.handleChat(userMessage, context);
-  return result;
+    try {
+        // Sample AI response (Replace with OpenAI call if implemented)
+        const aiResponse = `You said: "${userMessage}". I'm here to assist you!`;
+
+        context.log("AI Response:", aiResponse);
+
+        // Ensure response is returned as JSON
+        context.res = {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ success: true, message: aiResponse })
+        };
+
+    } catch (error) {
+        context.log("Error in processing:", error.message);
+        context.res = {
+            status: 500,
+            body: JSON.stringify({ error: "Internal server error", details: error.message })
+        };
+    }
 };
+
