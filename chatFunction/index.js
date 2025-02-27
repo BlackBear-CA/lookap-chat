@@ -162,9 +162,9 @@ async analyzeQuery(userMessage, context) {
         const response = await Promise.race([openAIRequest, timeoutPromise]);
 
         // Validate response structure
-        if (!response?.choices?.[0]?.message?.content) {
-            throw new Error("OpenAI returned an empty response");
-        }
+        if (!response || !response.choices || !response.choices[0]?.message?.content) {
+          throw new Error("OpenAI returned an empty or invalid response");
+      }
 
         const responseText = response.choices[0].message.content.trim();
         context.log(`Raw AI Response: ${responseText}`);
